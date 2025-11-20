@@ -1,0 +1,89 @@
+
+# Base URL
+@baseUrl = http://localhost:3000
+
+### Root endpoint
+GET {{baseUrl}}/
+
+
+###
+GET {{baseUrl}}/api
+
+
+### Create a new user
+POST http://localhost:3000/api/auth/register
+Content-Type: application/json
+
+{
+  "first_name": "Joshua",
+  "last_name": "Ngigi",
+  "email": "joshua@gmail.com",
+  "phone_number": "0797390822",
+  "user_type": "customer",
+  "password":"123456789"
+  
+}
+
+### Admin Login
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+
+{
+  "email": "joshua@gmail.com",
+  "password": "123456789"
+}
+
+### user login
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "denis@gmail.com",
+  "password": "password123"
+}
+
+
+
+### Update user
+PUT http://localhost:3000/api/users/2
+Content-Type: application/json
+
+{
+  "first_name": "denis",
+  "last_name": "kathuri",
+  "email": "denis@gmail.com",
+  "phone_number": "0723356478",
+  "password": "password123"
+}
+
+### Get user by ID
+GET {{baseUrl}}/api/users
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJmaXJzdF9uYW1lIjoiSm9zaHVhIiwibGFzdF9uYW1lIjoiTmdpZ2kiLCJlbWFpbCI6Impvc2h1YUBnbWFpbC5jb20iLCJ1c2VyX3R5cGUiOiJhZG1pbiIsImlhdCI6MTc2MzY0NDczMSwiZXhwIjoxNzYzNjQ4MzMxfQ.uwYqGndZmuoyRP9LCkZmENzAEOj5hNXZqatEoil8a-E
+
+
+
+### Delete user
+DELETE {{baseUrl}}/api/users/5
+
+###Vehicle Management
+POST http://localhost:3000/api/vehicles
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJmaXJzdF9uYW1lIjoiSm9zaHVhIiwibGFzdF9uYW1lIjoiTmdpZ2kiLCJlbWFpbCI6Impvc2h1YUBnbWFpbC5jb20iLCJ1c2VyX3R5cGUiOiJhZG1pbiIsImlhdCI6MTc2MzY0NDczMSwiZXhwIjoxNzYzNjQ4MzMxfQ.uwYqGndZmuoyRP9LCkZmENzAEOj5hNXZqatEoil8a-E
+
+
+{
+  "rental_rate": 50.00,
+  "current_location": "Westlands",
+  "manufacturer": "Toyota",
+  "model": "Camry",
+  "year": 2023,
+  "fuel_type": "Petrol",
+  "engine_capacity": 2.5,
+  "transmission": "Automatic",
+  "seating_capacity": 5,
+  "color": "White",
+  "features": "AC, Bluetooth, Navigation",
+  "vehicle_type": "four-wheeler"
+}
+
