@@ -15,11 +15,10 @@ POST http://localhost:3000/api/auth/register
 Content-Type: application/json
 
 {
-  "first_name": "Joshua",
-  "last_name": "Ngigi",
-  "email": "joshua@gmail.com",
-  "phone_number": "0797390822",
-  "user_type": "customer",
+  "first_name": "Agatha",
+  "last_name": "Wangari",
+  "email": "agatha@gmail.com",
+  "phone_number": "0733456723",
   "password":"123456789"
   
 }
@@ -87,3 +86,12 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJma
   "vehicle_type": "four-wheeler"
 }
 
+### PAYMENT ENDPOINTS
+POST {{baseUrl}}/api/payments/create-intent
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJmaXJzdF9uYW1lIjoiZGVuaXMiLCJsYXN0X25hbWUiOiJrYXRodXJpIiwiZW1haWwiOiJkZW5pc0BnbWFpbC5jb20iLCJ1c2VyX3R5cGUiOiJjdXN0b21lciIsImlhdCI6MTc2MzY5ODA2NSwiZXhwIjoxNzYzNzAxNjY1fQ.QdBTEKwewmITWG-z9G_Jw31XEMlkV-WJxj0kxXYP-38
+
+{
+  "booking_id": 1,
+  "amount": 150.00
+}
