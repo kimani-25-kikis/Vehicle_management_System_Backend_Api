@@ -4,6 +4,7 @@ import { getUserByEmailService } from "../users/users.service.ts";
 import * as authServices from "./auth.service.ts";
 import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
+import { EmailService } from "../email/email.service.ts"; // ADD THIS IMPORT
 
 dotenv.config();
 
@@ -13,7 +14,6 @@ interface CreateUserRequest {
     email: string;
     phone_number: string;
     password: string;
-    
 }
 
 interface LoginRequest {
@@ -29,7 +29,6 @@ interface UserPayload {
     user_type: 'admin' | 'customer';
 }
 
-
 export const createUser = async (c: Context) => {
     const body = await c.req.json() as CreateUserRequest;
 
@@ -44,7 +43,22 @@ export const createUser = async (c: Context) => {
         body.password = hashedPassword;
 
         const result = await authServices.createUserService(body.first_name, body.last_name, body.email, body.phone_number, body.password);
+        
         if (result === "User Registered successfully 🎊") {
+            // ✅ SEND WELCOME EMAIL AFTER SUCCESSFUL REGISTRATION
+            EmailService.sendWelcomeEmail({
+                customerName: `${body.first_name} ${body.last_name}`,
+                customerEmail: body.email
+            }).then(emailSuccess => {
+                if (emailSuccess) {
+                    console.log(`✅ Welcome email sent to: ${body.email}`);
+                } else {
+                    console.log(`❌ Failed to send welcome email to: ${body.email}`);
+                }
+            }).catch(emailError => {
+                console.error('Email sending error:', emailError);
+            });
+
             return c.json({ message: result }, 201);
         }
         return c.json({ error: result }, 500);
@@ -57,7 +71,6 @@ export const createUser = async (c: Context) => {
 export const loginUser = async (c: Context) => {
     const body = await c.req.json() as LoginRequest;
     try {
-      
         const existingUser = await getUserByEmailService(body.email);
         if (existingUser === null) {
             return c.json({ error: 'Invalid email or password 😟' }, 400);
@@ -78,7 +91,6 @@ export const loginUser = async (c: Context) => {
         };
 
         const secretKey = process.env.JWT_SECRET as string;
-
         const token = "Bearer "+jwt.sign(payload, secretKey, { expiresIn: '1h' });
 
         const userInfo: UserPayload = {

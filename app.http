@@ -15,10 +15,10 @@ POST http://localhost:3000/api/auth/register
 Content-Type: application/json
 
 {
-  "first_name": "Agatha",
-  "last_name": "Wangari",
-  "email": "agatha@gmail.com",
-  "phone_number": "0733456723",
+  "first_name": "Lucy",
+  "last_name": "Njambi",
+  "email": "lnyambura812@gmail.com",
+  "phone_number": "0711477634",
   "password":"123456789"
   
 }

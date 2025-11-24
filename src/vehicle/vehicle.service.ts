@@ -10,7 +10,8 @@ interface VehicleResponse {
     updated_at: string;
 }
 
-interface VehicleWithDetails extends VehicleResponse {
+interface VehicleSpecification {
+    vehicle_spec_id: number;
     manufacturer: string;
     model: string;
     year: number;
@@ -21,6 +22,18 @@ interface VehicleWithDetails extends VehicleResponse {
     color: string;
     features: string | null;
     vehicle_type: string;
+    created_at: string;
+    updated_at: string;
+}
+
+interface VehicleWithSpecification {
+    vehicle_id: number;
+    rental_rate: number;
+    availability: boolean;
+    current_location: string;
+    created_at: string;
+    updated_at: string;
+    specification: VehicleSpecification;
 }
 
 interface VehicleFilters {
@@ -36,12 +49,18 @@ interface VehicleFilters {
 }
 
 // Get all vehicles with optional filters
-export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<VehicleWithDetails[]> => {
+export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<VehicleWithSpecification[]> => {
     const db = getDbPool();
     
     let query = `
         SELECT 
-            v.*,
+            v.vehicle_id,
+            v.vehicle_spec_id,
+            v.rental_rate,
+            v.availability,
+            v.current_location,
+            v.created_at,
+            v.updated_at,
             vs.manufacturer,
             vs.model,
             vs.year,
@@ -51,7 +70,9 @@ export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<V
             vs.seating_capacity,
             vs.color,
             vs.features,
-            vs.vehicle_type
+            vs.vehicle_type,
+            vs.created_at as spec_created_at,
+            vs.updated_at as spec_updated_at
         FROM Vehicles v
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
         WHERE 1=1
@@ -107,15 +128,47 @@ export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<V
     query += ' ORDER BY v.created_at DESC';
 
     const result = await request.query(query);
-    return result.recordset;
+    
+    // Structure the data with nested specification
+    const vehiclesWithSpecs: VehicleWithSpecification[] = result.recordset.map(vehicle => ({
+        vehicle_id: vehicle.vehicle_id,
+        rental_rate: vehicle.rental_rate,
+        availability: vehicle.availability,
+        current_location: vehicle.current_location,
+        created_at: vehicle.created_at,
+        updated_at: vehicle.updated_at,
+        specification: {
+            vehicle_spec_id: vehicle.vehicle_spec_id,
+            manufacturer: vehicle.manufacturer,
+            model: vehicle.model,
+            year: vehicle.year,
+            fuel_type: vehicle.fuel_type,
+            engine_capacity: vehicle.engine_capacity,
+            transmission: vehicle.transmission,
+            seating_capacity: vehicle.seating_capacity,
+            color: vehicle.color,
+            features: vehicle.features,
+            vehicle_type: vehicle.vehicle_type,
+            created_at: vehicle.spec_created_at,
+            updated_at: vehicle.spec_updated_at
+        }
+    }));
+    
+    return vehiclesWithSpecs;
 }
 
 // Get vehicle by vehicle_id
-export const getVehicleByIdService = async (vehicle_id: number): Promise<VehicleWithDetails | null> => {
+export const getVehicleByIdService = async (vehicle_id: number): Promise<VehicleWithSpecification | null> => {
     const db = getDbPool();
     const query = `
         SELECT 
-            v.*,
+            v.vehicle_id,
+            v.vehicle_spec_id,
+            v.rental_rate,
+            v.availability,
+            v.current_location,
+            v.created_at,
+            v.updated_at,
             vs.manufacturer,
             vs.model,
             vs.year,
@@ -125,7 +178,9 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
             vs.seating_capacity,
             vs.color,
             vs.features,
-            vs.vehicle_type
+            vs.vehicle_type,
+            vs.created_at as spec_created_at,
+            vs.updated_at as spec_updated_at
         FROM Vehicles v
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
         WHERE v.vehicle_id = @vehicle_id
@@ -133,7 +188,35 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
     const result = await db.request()
         .input('vehicle_id', vehicle_id)
         .query(query);
-    return result.recordset[0] || null;
+    
+    if (!result.recordset[0]) {
+        return null;
+    }
+
+    const vehicle = result.recordset[0];
+    return {
+        vehicle_id: vehicle.vehicle_id,
+        rental_rate: vehicle.rental_rate,
+        availability: vehicle.availability,
+        current_location: vehicle.current_location,
+        created_at: vehicle.created_at,
+        updated_at: vehicle.updated_at,
+        specification: {
+            vehicle_spec_id: vehicle.vehicle_spec_id,
+            manufacturer: vehicle.manufacturer,
+            model: vehicle.model,
+            year: vehicle.year,
+            fuel_type: vehicle.fuel_type,
+            engine_capacity: vehicle.engine_capacity,
+            transmission: vehicle.transmission,
+            seating_capacity: vehicle.seating_capacity,
+            color: vehicle.color,
+            features: vehicle.features,
+            vehicle_type: vehicle.vehicle_type,
+            created_at: vehicle.spec_created_at,
+            updated_at: vehicle.spec_updated_at
+        }
+    };
 }
 
 // Create new vehicle
@@ -151,7 +234,7 @@ export const createVehicleService = async (
     color?: string,
     features?: string,
     vehicle_type?: string
-): Promise<VehicleResponse | string> => {
+): Promise<VehicleWithSpecification | string> => {
     const db = getDbPool();
     
     try {
@@ -199,7 +282,10 @@ export const createVehicleService = async (
             .input('current_location', current_location)
             .query(vehicleQuery);
 
-        return vehicleResult.recordset[0];
+        const vehicle = vehicleResult.recordset[0];
+        
+        // Get the full vehicle with specification
+        return await getVehicleByIdService(vehicle.vehicle_id) || "Failed to retrieve created vehicle";
     } catch (error: any) {
         console.error('Error in createVehicleService:', error);
         return "Failed to create vehicle";
@@ -212,7 +298,7 @@ export const updateVehicleService = async (
     rental_rate?: number,
     availability?: boolean,
     current_location?: string
-): Promise<VehicleResponse | null> => {
+): Promise<VehicleWithSpecification | null> => {
     const db = getDbPool();
     
     let query = 'UPDATE Vehicles SET ';
@@ -243,7 +329,13 @@ export const updateVehicleService = async (
     query += updates.join(', ') + ', updated_at = GETDATE() OUTPUT INSERTED.* WHERE vehicle_id = @vehicle_id';
 
     const result = await request.query(query);
-    return result.recordset[0] || null;
+    
+    if (!result.recordset[0]) {
+        return null;
+    }
+
+    // Return the full vehicle with specification
+    return await getVehicleByIdService(vehicle_id);
 }
 
 // Delete vehicle by vehicle_id
@@ -294,7 +386,7 @@ export const getVehicleSpecificationsService = async (): Promise<any[]> => {
 export const updateVehicleAvailabilityService = async (
     vehicle_id: number,
     availability: boolean
-): Promise<VehicleResponse | null> => {
+): Promise<VehicleWithSpecification | null> => {
     const db = getDbPool();
     const query = `
         UPDATE Vehicles 
@@ -306,5 +398,11 @@ export const updateVehicleAvailabilityService = async (
         .input('vehicle_id', vehicle_id)
         .input('availability', availability)
         .query(query);
-    return result.recordset[0] || null;
+    
+    if (!result.recordset[0]) {
+        return null;
+    }
+
+    // Return the full vehicle with specification
+    return await getVehicleByIdService(vehicle_id);
 }
