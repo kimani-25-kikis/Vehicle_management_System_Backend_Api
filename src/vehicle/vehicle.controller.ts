@@ -2,6 +2,8 @@ import { type Context } from "hono"
 import * as vehicleServices from "./vehicle.service.ts";
 
 // Get all vehicles with optional filters
+// Get all vehicles with optional filters
+// In vehicle.controller.ts - Update getAllVehicles
 export const getAllVehicles = async (c: Context) => {
     try {
         const location = c.req.query('location');
@@ -11,8 +13,35 @@ export const getAllVehicles = async (c: Context) => {
         const fuel_type = c.req.query('fuel_type');
         const min_seating = c.req.query('min_seating');
         const max_seating = c.req.query('max_seating');
-        const min_price = c.req.query('min_price');
-        const max_price = c.req.query('max_price');
+        const price_range = c.req.query('price_range'); // Get price_range from query
+        const transmission = c.req.query('transmission');
+        const search = c.req.query('search');
+
+        // Convert price_range to min_price and max_price
+        let min_price, max_price;
+        if (price_range) {
+            switch (price_range) {
+                case '0-50':
+                    min_price = 0;
+                    max_price = 50;
+                    break;
+                case '50-100':
+                    min_price = 50;
+                    max_price = 100;
+                    break;
+                case '100-200':
+                    min_price = 100;
+                    max_price = 200;
+                    break;
+                case '200+':
+                    min_price = 200;
+                    max_price = undefined; // No upper limit
+                    break;
+                default:
+                    min_price = undefined;
+                    max_price = undefined;
+            }
+        }
 
         const filters = {
             location,
@@ -20,24 +49,37 @@ export const getAllVehicles = async (c: Context) => {
             manufacturer,
             model,
             fuel_type,
+            transmission,
+            search,
             min_seating: min_seating ? parseInt(min_seating) : undefined,
             max_seating: max_seating ? parseInt(max_seating) : undefined,
-            min_price: min_price ? parseFloat(min_price) : undefined,
-            max_price: max_price ? parseFloat(max_price) : undefined
+            min_price: min_price !== undefined ? min_price : (c.req.query('min_price') ? parseFloat(c.req.query('min_price') as string) : undefined),
+            max_price: max_price !== undefined ? max_price : (c.req.query('max_price') ? parseFloat(c.req.query('max_price') as string) : undefined)
         };
 
         const result = await vehicleServices.getAllVehiclesService(filters);
         
         if (result.length === 0) {
-            return c.json({ message: 'No vehicles found' }, 404);
+            return c.json({ 
+                vehicles: [],
+                total: 0,
+                page: 1,
+                limit: 0,
+                message: 'No vehicles found' 
+            }, 200);
         }
-        return c.json(result);
+
+        return c.json({
+            vehicles: result,
+            total: result.length,
+            page: 1,
+            limit: result.length
+        });
     } catch (error: any) {
         console.error('Error fetching vehicles:', error.message);
         return c.json({ error: 'Failed to fetch vehicles' }, 500);
     }
 }
-
 // Get vehicle by vehicle_id
 export const getVehicleById = async (c: Context) => {
     const vehicle_id = parseInt(c.req.param('vehicle_id'))
@@ -56,6 +98,13 @@ export const getVehicleById = async (c: Context) => {
 // Create new vehicle
 export const createVehicle = async (c: Context) => {
     try {
+        const customer = c.customer;
+        
+        // Only admins can create vehicles
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
         const body = await c.req.json()
 
         // Validate required fields
@@ -84,7 +133,8 @@ export const createVehicle = async (c: Context) => {
             body.seating_capacity,
             body.color,
             body.features,
-            body.vehicle_type
+            body.vehicle_type,
+            body.image_url // ✅ ADDED IMAGE_URL PARAMETER
         );
 
         if (typeof result === "string") {
@@ -102,6 +152,13 @@ export const createVehicle = async (c: Context) => {
 export const updateVehicle = async (c: Context) => {
     try {
         const vehicle_id = parseInt(c.req.param('vehicle_id'))
+        const customer = c.customer;
+        
+        // Only admins can update vehicles
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
         const body = await c.req.json()
 
         // Check if vehicle exists
@@ -133,6 +190,13 @@ export const updateVehicle = async (c: Context) => {
 export const deleteVehicle = async (c: Context) => {
     const vehicle_id = parseInt(c.req.param('vehicle_id'))
     try {
+        const customer = c.customer;
+        
+        // Only admins can delete vehicles
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
         // Check if vehicle exists
         const check = await vehicleServices.getVehicleByIdService(vehicle_id);
         if (check === null) {
@@ -186,6 +250,13 @@ export const getVehicleSpecifications = async (c: Context) => {
 export const updateVehicleAvailability = async (c: Context) => {
     try {
         const vehicle_id = parseInt(c.req.param('vehicle_id'))
+        const customer = c.customer;
+        
+        // Only admins can update availability
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
         const body = await c.req.json()
 
         // Check if vehicle exists

@@ -22,6 +22,7 @@ interface VehicleSpecification {
     color: string;
     features: string | null;
     vehicle_type: string;
+    image_url: string | null; // ✅ ADDED IMAGE_URL
     created_at: string;
     updated_at: string;
 }
@@ -49,7 +50,8 @@ interface VehicleFilters {
 }
 
 // Get all vehicles with optional filters
-export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<VehicleWithSpecification[]> => {
+// In vehicle.service.ts - Update getAllVehiclesService
+export const getAllVehiclesService = async (filters?: VehicleFilters & { search?: string }): Promise<VehicleWithSpecification[]> => {
     const db = getDbPool();
     
     let query = `
@@ -71,15 +73,22 @@ export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<V
             vs.color,
             vs.features,
             vs.vehicle_type,
+            vs.image_url,
             vs.created_at as spec_created_at,
             vs.updated_at as spec_updated_at
         FROM Vehicles v
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-        WHERE 1=1
+        WHERE 1=1 AND v.availability = 1
     `;
     
     const request = db.request();
 
+    // Search functionality (searches across multiple fields)
+    if (filters?.search) {
+        query += ' AND (vs.manufacturer LIKE @search OR vs.model LIKE @search OR vs.features LIKE @search OR v.current_location LIKE @search)';
+        request.input('search', `%${filters.search}%`);
+    }
+    
     if (filters?.location) {
         query += ' AND v.current_location LIKE @location';
         request.input('location', `%${filters.location}%`);
@@ -149,6 +158,7 @@ export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<V
             color: vehicle.color,
             features: vehicle.features,
             vehicle_type: vehicle.vehicle_type,
+            image_url: vehicle.image_url,
             created_at: vehicle.spec_created_at,
             updated_at: vehicle.spec_updated_at
         }
@@ -179,6 +189,7 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
             vs.color,
             vs.features,
             vs.vehicle_type,
+            vs.image_url, -- ✅ ADDED IMAGE_URL COLUMN
             vs.created_at as spec_created_at,
             vs.updated_at as spec_updated_at
         FROM Vehicles v
@@ -213,6 +224,7 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
             color: vehicle.color,
             features: vehicle.features,
             vehicle_type: vehicle.vehicle_type,
+            image_url: vehicle.image_url, // ✅ ADDED IMAGE_URL
             created_at: vehicle.spec_created_at,
             updated_at: vehicle.spec_updated_at
         }
@@ -233,7 +245,8 @@ export const createVehicleService = async (
     seating_capacity?: number,
     color?: string,
     features?: string,
-    vehicle_type?: string
+    vehicle_type?: string,
+    image_url?: string // ✅ ADDED IMAGE_URL PARAMETER
 ): Promise<VehicleWithSpecification | string> => {
     const db = getDbPool();
     
@@ -248,9 +261,9 @@ export const createVehicleService = async (
 
             const specQuery = `
                 INSERT INTO VehicleSpecifications 
-                (manufacturer, model, year, fuel_type, engine_capacity, transmission, seating_capacity, color, features, vehicle_type)
+                (manufacturer, model, year, fuel_type, engine_capacity, transmission, seating_capacity, color, features, vehicle_type, image_url)
                 OUTPUT INSERTED.vehicle_spec_id
-                VALUES (@manufacturer, @model, @year, @fuel_type, @engine_capacity, @transmission, @seating_capacity, @color, @features, @vehicle_type)
+                VALUES (@manufacturer, @model, @year, @fuel_type, @engine_capacity, @transmission, @seating_capacity, @color, @features, @vehicle_type, @image_url)
             `;
             
             const specResult = await db.request()
@@ -264,6 +277,7 @@ export const createVehicleService = async (
                 .input('color', color || null)
                 .input('features', features || null)
                 .input('vehicle_type', vehicle_type)
+                .input('image_url', image_url || null) // ✅ ADDED IMAGE_URL INPUT
                 .query(specQuery);
 
             final_vehicle_spec_id = specResult.recordset[0].vehicle_spec_id;
@@ -377,7 +391,25 @@ export const getAvailableLocationsService = async (): Promise<string[]> => {
 // Get vehicle specifications
 export const getVehicleSpecificationsService = async (): Promise<any[]> => {
     const db = getDbPool();
-    const query = 'SELECT * FROM VehicleSpecifications ORDER BY manufacturer, model, year';
+    const query = `
+        SELECT 
+            vehicle_spec_id,
+            manufacturer,
+            model,
+            year,
+            fuel_type,
+            engine_capacity,
+            transmission,
+            seating_capacity,
+            color,
+            features,
+            vehicle_type,
+            image_url, -- ✅ ADDED IMAGE_URL COLUMN
+            created_at,
+            updated_at
+        FROM VehicleSpecifications 
+        ORDER BY manufacturer, model, year
+    `;
     const result = await db.request().query(query);
     return result.recordset;
 }
