@@ -1,45 +1,88 @@
 import { type Context } from "hono"
 import * as bookingServices from "./booking.service.ts";
 
+// Helper function to compare dates without time (timezone-safe)
+const isDateInPast = (dateString: string): boolean => {
+    const inputDate = new Date(dateString);
+    const today = new Date();
+    
+    // Compare only year, month, and date (ignore time)
+    const inputDateOnly = new Date(inputDate.getFullYear(), inputDate.getMonth(), inputDate.getDate());
+    const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    return inputDateOnly < todayOnly;
+};
+
+// Helper function to check if return date is after pickup date
+const isReturnAfterPickup = (pickupDateStr: string, returnDateStr: string): boolean => {
+    const pickupDate = new Date(pickupDateStr);
+    const returnDate = new Date(returnDateStr);
+    return returnDate > pickupDate;
+};
+
 // Create new booking
 export const createBooking = async (c: Context) => {
     try {
         const customer = c.customer; // From auth middleware
         const body = await c.req.json()
 
-        // Validate required fields
-        if (!body.vehicle_id || !body.pickup_location || !body.return_location || 
-            !body.booking_date || !body.return_date) {
-            return c.json({ error: 'All fields are required' }, 400);
+        // Validate required fields for new table structure
+        const requiredFields = [
+            'vehicle_id', 'pickup_location', 'return_location', 
+            'pickup_date', 'return_date', 'total_amount',
+            'driver_license_number', 'driver_license_expiry',
+            'driver_license_front_url', 'driver_license_back_url',
+            'insurance_type'
+        ];
+
+        for (const field of requiredFields) {
+            if (!body[field]) {
+                return c.json({ error: `Missing required field: ${field}` }, 400);
+            }
         }
 
-        // Validate dates
-        const bookingDate = new Date(body.booking_date);
-        const returnDate = new Date(body.return_date);
-        const today = new Date();
-        
-        if (bookingDate >= returnDate) {
-            return c.json({ error: 'Return date must be after booking date' }, 400);
+        // Validate dates with timezone-safe comparison
+        if (isDateInPast(body.pickup_date)) {
+            return c.json({ error: 'Pickup date cannot be in the past' }, 400);
         }
 
-        if (bookingDate < today) {
-            return c.json({ error: 'Booking date cannot be in the past' }, 400);
+        if (!isReturnAfterPickup(body.pickup_date, body.return_date)) {
+            return c.json({ error: 'Return date must be after pickup date' }, 400);
         }
 
-        const result = await bookingServices.createBookingService(
-            customer.user_id,
-            body.vehicle_id,
-            body.pickup_location,
-            body.return_location,
-            body.booking_date,
-            body.return_date
-        );
+        // Validate license expiry date
+        if (isDateInPast(body.driver_license_expiry)) {
+            return c.json({ error: 'Driver license must not be expired' }, 400);
+        }
+
+        const result = await bookingServices.createBookingService({
+            user_id: customer.user_id,
+            vehicle_id: body.vehicle_id,
+            pickup_location: body.pickup_location,
+            return_location: body.return_location,
+            pickup_date: body.pickup_date,
+            return_date: body.return_date,
+            booking_date: new Date().toISOString(), // Current timestamp
+            total_amount: body.total_amount,
+            driver_license_number: body.driver_license_number,
+            driver_license_expiry: body.driver_license_expiry,
+            driver_license_front_url: body.driver_license_front_url,
+            driver_license_back_url: body.driver_license_back_url,
+            insurance_type: body.insurance_type,
+            additional_protection: body.additional_protection || false,
+            roadside_assistance: body.roadside_assistance !== undefined ? body.roadside_assistance : true,
+            booking_status: 'Pending'
+        });
 
         if (typeof result === "string") {
             return c.json({ error: result }, 400);
         }
 
-        return c.json({ message: 'Booking created successfully 🎊', booking: result }, 201);
+        return c.json({ 
+            message: 'Booking created successfully 🎊', 
+            booking: result,
+            booking_id: result.booking_id 
+        }, 201);
     } catch (error: any) {
         console.error('Error creating booking:', error.message);
         return c.json({ error: error.message }, 500);
@@ -106,7 +149,7 @@ export const getBookingById = async (c: Context) => {
     }
 }
 
-// Update booking status (admin only)
+// Update booking status (admin only) - Updated for new status flow
 export const updateBookingStatus = async (c: Context) => {
     try {
         const booking_id = parseInt(c.req.param('booking_id'))
@@ -118,18 +161,25 @@ export const updateBookingStatus = async (c: Context) => {
             return c.json({ error: 'Unauthorized' }, 403);
         }
 
-        const validStatuses = ['Pending', 'Confirmed', 'Active', 'Completed', 'Cancelled'];
+        const validStatuses = ['Pending', 'Approved', 'Active', 'Completed', 'Cancelled', 'Rejected'];
         if (!body.booking_status || !validStatuses.includes(body.booking_status)) {
             return c.json({ error: 'Valid booking status is required' }, 400);
         }
 
-        const result = await bookingServices.updateBookingStatusService(booking_id, body.booking_status);
+        const result = await bookingServices.updateBookingStatusService(
+            booking_id, 
+            body.booking_status,
+            body.admin_notes
+        );
         
         if (result === null) {
             return c.json({ error: 'Booking not found or status update failed' }, 404);
         }
 
-        return c.json({ message: 'Booking status updated successfully', updated_booking: result }, 200);
+        return c.json({ 
+            message: 'Booking status updated successfully', 
+            updated_booking: result 
+        }, 200);
 
     } catch (error) {
         console.error('Error updating booking status:', error);
