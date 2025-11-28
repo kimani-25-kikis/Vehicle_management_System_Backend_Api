@@ -1,12 +1,11 @@
 import { type Context } from "hono"
-import * as bookingServices from "./booking.service.ts";
+import * as bookingServices from "./booking.service.ts"
 
 // Helper function to compare dates without time (timezone-safe)
 const isDateInPast = (dateString: string): boolean => {
     const inputDate = new Date(dateString);
     const today = new Date();
     
-    // Compare only year, month, and date (ignore time)
     const inputDateOnly = new Date(inputDate.getFullYear(), inputDate.getMonth(), inputDate.getDate());
     const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     
@@ -23,7 +22,7 @@ const isReturnAfterPickup = (pickupDateStr: string, returnDateStr: string): bool
 // Create new booking
 export const createBooking = async (c: Context) => {
     try {
-        const customer = c.customer; // From auth middleware
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
         const body = await c.req.json()
 
         // Validate required fields for new table structure
@@ -62,7 +61,7 @@ export const createBooking = async (c: Context) => {
             return_location: body.return_location,
             pickup_date: body.pickup_date,
             return_date: body.return_date,
-            booking_date: new Date().toISOString(), // Current timestamp
+            booking_date: new Date().toISOString(),
             total_amount: body.total_amount,
             driver_license_number: body.driver_license_number,
             driver_license_expiry: body.driver_license_expiry,
@@ -71,7 +70,7 @@ export const createBooking = async (c: Context) => {
             insurance_type: body.insurance_type,
             additional_protection: body.additional_protection || false,
             roadside_assistance: body.roadside_assistance !== undefined ? body.roadside_assistance : true,
-            booking_status: 'Pending'
+            booking_status: 'Pending' // Start as Pending, will change to Pending Payment after payment intent
         });
 
         if (typeof result === "string") {
@@ -79,8 +78,9 @@ export const createBooking = async (c: Context) => {
         }
 
         return c.json({ 
+            success: true,
             message: 'Booking created successfully 🎊', 
-            booking: result,
+            data: result,
             booking_id: result.booking_id 
         }, 201);
     } catch (error: any) {
@@ -92,13 +92,13 @@ export const createBooking = async (c: Context) => {
 // Get user's bookings
 export const getUserBookings = async (c: Context) => {
     try {
-        const customer = c.customer; // From auth middleware
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
         const result = await bookingServices.getUserBookingsService(customer.user_id);
         
         if (result.length === 0) {
             return c.json({ message: 'No bookings found' }, 404);
         }
-        return c.json(result);
+        return c.json({ success: true, booking: result });
     } catch (error: any) {
         console.error('Error fetching user bookings:', error.message);
         return c.json({ error: 'Failed to fetch bookings' }, 500);
@@ -108,7 +108,7 @@ export const getUserBookings = async (c: Context) => {
 // Get all bookings (admin only)
 export const getAllBookings = async (c: Context) => {
     try {
-        const customer = c.customer; // From auth middleware
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
         
         if (customer.user_type !== 'admin') {
             return c.json({ error: 'Unauthorized' }, 403);
@@ -119,7 +119,7 @@ export const getAllBookings = async (c: Context) => {
         if (result.length === 0) {
             return c.json({ message: 'No bookings found' }, 404);
         }
-        return c.json(result);
+        return c.json({ success: true, data: result });
     } catch (error: any) {
         console.error('Error fetching all bookings:', error.message);
         return c.json({ error: 'Failed to fetch bookings' }, 500);
@@ -130,7 +130,7 @@ export const getAllBookings = async (c: Context) => {
 export const getBookingById = async (c: Context) => {
     const booking_id = parseInt(c.req.param('booking_id'))
     try {
-        const customer = c.customer; // From auth middleware
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
         
         const result = await bookingServices.getBookingByIdService(booking_id);
         if (result === null) {
@@ -142,18 +142,18 @@ export const getBookingById = async (c: Context) => {
             return c.json({ error: 'Unauthorized' }, 403);
         }
 
-        return c.json(result);
+        return c.json({ success: true, booking: result });
     } catch (error) {
         console.error('Error fetching booking:', error);
         return c.json({ error: 'Failed to fetch booking' }, 500);
     }
 }
 
-// Update booking status (admin only) - Updated for new status flow
+// Update booking status (admin only) - Updated for payment flow
 export const updateBookingStatus = async (c: Context) => {
     try {
         const booking_id = parseInt(c.req.param('booking_id'))
-        const customer = c.customer; // From auth middleware
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
         const body = await c.req.json()
 
         // Only admins can update booking status
@@ -161,7 +161,8 @@ export const updateBookingStatus = async (c: Context) => {
             return c.json({ error: 'Unauthorized' }, 403);
         }
 
-        const validStatuses = ['Pending', 'Approved', 'Active', 'Completed', 'Cancelled', 'Rejected'];
+        // Updated valid statuses for payment flow
+        const validStatuses = ['Pending', 'Pending Payment', 'Confirmed', 'Active', 'Completed', 'Cancelled', 'Rejected'];
         if (!body.booking_status || !validStatuses.includes(body.booking_status)) {
             return c.json({ error: 'Valid booking status is required' }, 400);
         }
@@ -169,7 +170,7 @@ export const updateBookingStatus = async (c: Context) => {
         const result = await bookingServices.updateBookingStatusService(
             booking_id, 
             body.booking_status,
-            body.admin_notes
+            body.admin_notes || ''
         );
         
         if (result === null) {
@@ -177,8 +178,9 @@ export const updateBookingStatus = async (c: Context) => {
         }
 
         return c.json({ 
+            success: true,
             message: 'Booking status updated successfully', 
-            updated_booking: result 
+            data: result 
         }, 200);
 
     } catch (error) {
@@ -191,7 +193,7 @@ export const updateBookingStatus = async (c: Context) => {
 export const cancelBooking = async (c: Context) => {
     const booking_id = parseInt(c.req.param('booking_id'))
     try {
-        const customer = c.customer; // From auth middleware
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
         
         const booking = await bookingServices.getBookingByIdService(booking_id);
         if (booking === null) {
@@ -205,13 +207,124 @@ export const cancelBooking = async (c: Context) => {
 
         const result = await bookingServices.cancelBookingService(booking_id);
         
-        if (result === "Booking cannot be cancelled or already cancelled") {
+        if (result === "Booking cannot be cancelled or requires refund processing") {
             return c.json({ error: result }, 400);
         }
 
-        return c.json({ message: result, cancelled_booking: booking }, 200);
+        return c.json({ 
+            success: true,
+            message: result, 
+            data: booking 
+        }, 200);
     } catch (error) {
         console.error('Error cancelling booking:', error);
         return c.json({ error: 'Failed to cancel booking' }, 500);
+    }
+}
+
+// NEW: Confirm booking payment
+export const confirmBookingPayment = async (c: Context) => {
+    try {
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const booking_id = parseInt(c.req.param('booking_id'));
+        const { payment_intent_id } = await c.req.json();
+
+        if (!payment_intent_id) {
+            return c.json({ error: 'Payment intent ID is required' }, 400);
+        }
+
+        const result = await bookingServices.confirmBookingPaymentService(
+            booking_id,
+            payment_intent_id,
+            customer.user_id
+        );
+
+        if (typeof result === "string") {
+            return c.json({ error: result }, 400);
+        }
+
+        return c.json({
+            success: true,
+            message: 'Booking payment confirmed successfully 🎊',
+            data: result
+        }, 200);
+    } catch (error: any) {
+        console.error('Error confirming booking payment:', error.message);
+        return c.json({ error: error.message }, 500);
+    }
+}
+
+// NEW: Extend booking
+export const extendBooking = async (c: Context) => {
+    try {
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const booking_id = parseInt(c.req.param('booking_id'));
+        const { new_return_date, additional_amount } = await c.req.json();
+
+        if (!new_return_date) {
+            return c.json({ error: 'New return date is required' }, 400);
+        }
+
+        // Validate new return date
+        const booking = await bookingServices.getBookingByIdService(booking_id);
+        if (booking && isDateInPast(new_return_date)) {
+            return c.json({ error: 'New return date cannot be in the past' }, 400);
+        }
+
+        const result = await bookingServices.extendBookingService(
+            booking_id,
+            new_return_date,
+            additional_amount || 0,
+            customer.user_id
+        );
+
+        if (typeof result === "string") {
+            return c.json({ error: result }, 400);
+        }
+
+        return c.json({
+            success: true,
+            message: 'Booking extended successfully',
+            data: result
+        }, 200);
+    } catch (error: any) {
+        console.error('Error extending booking:', error.message);
+        return c.json({ error: error.message }, 500);
+    }
+}
+
+// NEW: Refund booking payment (admin only)
+export const refundBookingPayment = async (c: Context) => {
+    try {
+        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const booking_id = parseInt(c.req.param('booking_id'));
+        const { refund_reason } = await c.req.json();
+
+        // Only admins can process refunds
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
+        if (!refund_reason) {
+            return c.json({ error: 'Refund reason is required' }, 400);
+        }
+
+        const result = await bookingServices.refundBookingPaymentService(
+            booking_id,
+            refund_reason
+        );
+
+        if (typeof result === "string") {
+            return c.json({ error: result }, 400);
+        }
+
+        return c.json({
+            success: true,
+            message: 'Booking payment refunded successfully',
+            data: result
+        }, 200);
+    } catch (error: any) {
+        console.error('Error refunding booking payment:', error.message);
+        return c.json({ error: error.message }, 500);
     }
 }

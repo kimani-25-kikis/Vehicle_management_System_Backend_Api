@@ -4,7 +4,7 @@ import { getUserByEmailService } from "../users/users.service.ts";
 import * as authServices from "./auth.service.ts";
 import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
-import { EmailService } from "../email/email.service.ts"; // ADD THIS IMPORT
+// import { EmailService } from "../email/email.service.ts"; // ADD THIS IMPORT
 
 dotenv.config();
 
@@ -46,18 +46,18 @@ export const createUser = async (c: Context) => {
         
         if (result === "User Registered successfully 🎊") {
             // ✅ SEND WELCOME EMAIL AFTER SUCCESSFUL REGISTRATION
-            EmailService.sendWelcomeEmail({
-                customerName: `${body.first_name} ${body.last_name}`,
-                customerEmail: body.email
-            }).then(emailSuccess => {
-                if (emailSuccess) {
-                    console.log(`✅ Welcome email sent to: ${body.email}`);
-                } else {
-                    console.log(`❌ Failed to send welcome email to: ${body.email}`);
-                }
-            }).catch(emailError => {
-                console.error('Email sending error:', emailError);
-            });
+            // EmailService.sendWelcomeEmail({
+            //     customerName: `${body.first_name} ${body.last_name}`,
+            //     customerEmail: body.email
+            // }).then(emailSuccess => {
+            //     if (emailSuccess) {
+            //         console.log(`✅ Welcome email sent to: ${body.email}`);
+            //     } else {
+            //         console.log(`❌ Failed to send welcome email to: ${body.email}`);
+            //     }
+            // }).catch(emailError => {
+            //     console.error('Email sending error:', emailError);
+            // });
 
             return c.json({ message: result }, 201);
         }
@@ -91,7 +91,7 @@ export const loginUser = async (c: Context) => {
         };
 
         const secretKey = process.env.JWT_SECRET as string;
-        const token = "Bearer "+jwt.sign(payload, secretKey, { expiresIn: '1h' });
+        const token = "Bearer "+jwt.sign(payload, secretKey, { expiresIn: '2h' });
 
         const userInfo: UserPayload = {
             user_id: existingUser.user_id,

@@ -16,7 +16,7 @@ import uploadRoutes from './uploads/uploads.routes.ts'
 
 const app = new Hono()
 
-// ✅ Enable CORS for frontend
+
 app.use(
   '*',
   cors({
@@ -39,7 +39,7 @@ app.use('*', logger())
 app.use(limiter)
 
 // Root endpoint
-app.get('/', (c: Context) => { // ✅ Added Context type
+app.get('/', (c: Context) => { 
   return c.json({
     message: 'Luxury Motors',
   })

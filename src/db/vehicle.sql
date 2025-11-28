@@ -89,6 +89,22 @@ CREATE TABLE Payments (
     FOREIGN KEY (booking_id) REFERENCES Bookings(booking_id) ON DELETE CASCADE
 );
 
+CREATE TABLE PaymentsTable(
+    payment_id INT IDENTITY(1,1) PRIMARY KEY,
+    booking_id INT NOT NULL,
+    user_id INT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    payment_status NVARCHAR(20) CHECK (payment_status IN ('Pending', 'Completed', 'Failed', 'Refunded')) DEFAULT 'Pending',
+    -- payment_date DATETIME2,
+    payment_method NVARCHAR(50),
+    transaction_id NVARCHAR(100),
+    created_at DATETIME2 DEFAULT GETDATE(),
+    updated_at DATETIME2 DEFAULT GETDATE(),
+    FOREIGN KEY (booking_id) REFERENCES Bookings(booking_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES Users(user_id) ON DELETE NO ACTION
+
+);
+
 -- Customer Support Tickets Table
 CREATE TABLE SupportTickets (
     ticket_id INT IDENTITY(1,1) PRIMARY KEY,

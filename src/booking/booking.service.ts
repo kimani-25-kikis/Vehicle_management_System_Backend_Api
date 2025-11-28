@@ -1,4 +1,10 @@
 import { getDbPool } from "../db/db.config.ts"
+import Stripe from 'stripe'
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2025-11-17.clover',
+  typescript: true,
+})
 
 interface BookingResponse {
     booking_id: number;
@@ -53,7 +59,6 @@ interface CreateBookingData {
 }
 
 // Create new booking
-// Create new booking
 export const createBookingService = async (
     bookingData: CreateBookingData
 ): Promise<BookingResponse | string> => {
@@ -72,12 +77,12 @@ export const createBookingService = async (
 
         const vehicle = vehicleResult.recordset[0];
 
-        // Check if vehicle is available for the requested dates
+        // Check if vehicle is available for the requested dates (updated status check)
         const availabilityQuery = `
             SELECT COUNT(*) as overlapping_bookings
             FROM Bookings 
             WHERE vehicle_id = @vehicle_id 
-            AND booking_status IN ('Pending', 'Approved', 'Active')
+            AND booking_status IN ('Pending Payment', 'Confirmed', 'Active')
             AND (
                 (pickup_date BETWEEN @pickup_date AND @return_date) OR
                 (return_date BETWEEN @pickup_date AND @return_date) OR
@@ -87,15 +92,15 @@ export const createBookingService = async (
         
         const availabilityResult = await db.request()
             .input('vehicle_id', bookingData.vehicle_id)
-            .input('pickup_date', new Date(bookingData.pickup_date)) // Convert to Date object
-            .input('return_date', new Date(bookingData.return_date)) // Convert to Date object
+            .input('pickup_date', new Date(bookingData.pickup_date))
+            .input('return_date', new Date(bookingData.return_date))
             .query(availabilityQuery);
 
         if (availabilityResult.recordset[0].overlapping_bookings > 0) {
             return "Vehicle is already booked for the selected dates";
         }
 
-        // Create booking with all new fields - CONVERT DATES PROPERLY
+        // Create booking with all fields
         const bookingQuery = `
             INSERT INTO Bookings (
                 user_id, vehicle_id, pickup_location, return_location, 
@@ -121,12 +126,12 @@ export const createBookingService = async (
             .input('vehicle_id', bookingData.vehicle_id)
             .input('pickup_location', bookingData.pickup_location)
             .input('return_location', bookingData.return_location)
-            .input('pickup_date', new Date(bookingData.pickup_date)) // Convert to Date object
-            .input('return_date', new Date(bookingData.return_date)) // Convert to Date object
-            .input('booking_date', new Date(bookingData.booking_date)) // Convert to Date object
+            .input('pickup_date', new Date(bookingData.pickup_date))
+            .input('return_date', new Date(bookingData.return_date))
+            .input('booking_date', new Date(bookingData.booking_date))
             .input('total_amount', bookingData.total_amount)
             .input('driver_license_number', bookingData.driver_license_number)
-            .input('driver_license_expiry', new Date(bookingData.driver_license_expiry)) // Convert to Date object
+            .input('driver_license_expiry', new Date(bookingData.driver_license_expiry))
             .input('driver_license_front_url', bookingData.driver_license_front_url)
             .input('driver_license_back_url', bookingData.driver_license_back_url)
             .input('insurance_type', bookingData.insurance_type)
@@ -139,17 +144,9 @@ export const createBookingService = async (
         return bookingResult.recordset[0];
     } catch (error: any) {
         console.error('❌ Database error in createBookingService:', error);
-        console.error('❌ Error details:', {
-            message: error.message,
-            number: error.number,
-            state: error.state,
-            procedure: error.procedure,
-            lineNumber: error.lineNumber
-        });
         return `Database error: ${error.message}`;
     }
 }
-      
 
 // Get user's bookings
 export const getUserBookingsService = async (user_id: number): Promise<BookingWithDetails[]> => {
@@ -233,8 +230,8 @@ export const updateBookingStatusService = async (
             updated_at = GETDATE()
     `;
     
-    // If status is Approved, set verified_by_admin and verified_at
-    if (booking_status === 'Approved') {
+    // If status is Active, set verified_by_admin and verified_at
+    if (booking_status === 'Active') {
         query += `, verified_by_admin = 1, verified_at = GETDATE()`;
     }
     
@@ -261,7 +258,7 @@ export const updateBookingStatusService = async (
 export const cancelBookingService = async (booking_id: number): Promise<string> => {
     const db = getDbPool();
     
-    // Check if booking can be cancelled (only Pending or Approved bookings can be cancelled)
+    // Check if booking can be cancelled (only Pending or Pending Payment bookings can be cancelled without refund)
     const checkQuery = `
         SELECT booking_status 
         FROM Bookings 
@@ -277,8 +274,10 @@ export const cancelBookingService = async (booking_id: number): Promise<string> 
     }
 
     const currentStatus = checkResult.recordset[0].booking_status;
-    if (!['Pending', 'Approved'].includes(currentStatus)) {
-        return "Booking cannot be cancelled or already cancelled";
+    const cancellableStatuses = ['Pending', 'Pending Payment'];
+    
+    if (!cancellableStatuses.includes(currentStatus)) {
+        return "Booking cannot be cancelled or requires refund processing";
     }
 
     const cancelQuery = `
@@ -292,4 +291,204 @@ export const cancelBookingService = async (booking_id: number): Promise<string> 
         .query(cancelQuery);
     
     return result.rowsAffected[0] === 1 ? "Booking cancelled successfully 🎊" : "Failed to cancel booking";
+}
+
+// NEW: Confirm booking payment
+export const confirmBookingPaymentService = async (
+    booking_id: number,
+    payment_intent_id: string,
+    user_id: number
+): Promise<BookingResponse | string> => {
+    const db = getDbPool();
+    
+    try {
+        // Verify the booking exists and belongs to the user
+        const bookingQuery = `
+            SELECT b.* 
+            FROM Bookings b
+            WHERE b.booking_id = @booking_id AND b.user_id = @user_id
+        `;
+        const bookingResult = await db.request()
+            .input('booking_id', booking_id)
+            .input('user_id', user_id)
+            .query(bookingQuery);
+
+        if (bookingResult.recordset.length === 0) {
+            return "Booking not found or unauthorized";
+        }
+
+        const booking = bookingResult.recordset[0];
+
+        // Check if booking is in a state that can be confirmed
+        if (!['Pending', 'Pending Payment'].includes(booking.booking_status)) {
+            return "Booking cannot be confirmed in its current status";
+        }
+
+        // Verify payment with Stripe
+        const paymentIntent = await stripe.paymentIntents.retrieve(payment_intent_id);
+
+        if (paymentIntent.status !== 'succeeded') {
+            return `Payment not successful. Status: ${paymentIntent.status}`;
+        }
+
+        // Update booking status to Confirmed
+        const updateBookingQuery = `
+            UPDATE Bookings 
+            SET booking_status = 'Confirmed', 
+                updated_at = GETDATE()
+            OUTPUT INSERTED.*
+            WHERE booking_id = @booking_id
+        `;
+        
+        const updateResult = await db.request()
+            .input('booking_id', booking_id)
+            .query(updateBookingQuery);
+
+        console.log('✅ Booking payment confirmed:', updateResult.recordset[0]);
+        return updateResult.recordset[0];
+    } catch (error: any) {
+        console.error('Error in confirmBookingPaymentService:', error);
+        return "Failed to confirm booking payment: " + error.message;
+    }
+}
+
+// NEW: Extend booking
+export const extendBookingService = async (
+    booking_id: number,
+    new_return_date: string,
+    additional_amount: number,
+    user_id: number
+): Promise<BookingResponse | string> => {
+    const db = getDbPool();
+    
+    try {
+        // Verify the booking exists and belongs to the user
+        const bookingQuery = `
+            SELECT * FROM Bookings 
+            WHERE booking_id = @booking_id AND user_id = @user_id
+        `;
+        const bookingResult = await db.request()
+            .input('booking_id', booking_id)
+            .input('user_id', user_id)
+            .query(bookingQuery);
+
+        if (bookingResult.recordset.length === 0) {
+            return "Booking not found or unauthorized";
+        }
+
+        const booking = bookingResult.recordset[0];
+
+        // Check if booking can be extended
+        if (!['Confirmed', 'Active'].includes(booking.booking_status)) {
+            return "Booking cannot be extended in its current status";
+        }
+
+        // Check if new return date is valid
+        const currentReturnDate = new Date(booking.return_date);
+        const newReturnDate = new Date(new_return_date);
+        
+        if (newReturnDate <= currentReturnDate) {
+            return "New return date must be after current return date";
+        }
+
+        // Update booking with new return date and additional amount
+        const updateBookingQuery = `
+            UPDATE Bookings 
+            SET return_date = @new_return_date,
+                total_amount = total_amount + @additional_amount,
+                updated_at = GETDATE()
+            OUTPUT INSERTED.*
+            WHERE booking_id = @booking_id
+        `;
+        
+        const updateResult = await db.request()
+            .input('booking_id', booking_id)
+            .input('new_return_date', new_return_date)
+            .input('additional_amount', additional_amount)
+            .query(updateBookingQuery);
+
+        console.log('✅ Booking extended:', updateResult.recordset[0]);
+        return updateResult.recordset[0];
+    } catch (error: any) {
+        console.error('Error in extendBookingService:', error);
+        return "Failed to extend booking: " + error.message;
+    }
+}
+
+// NEW: Refund booking payment (admin only)
+export const refundBookingPaymentService = async (
+    booking_id: number,
+    refund_reason: string
+): Promise<any | string> => {
+    const db = getDbPool();
+    
+    try {
+        // Get booking and payment details
+        const bookingQuery = `
+            SELECT b.*, p.transaction_id, p.payment_id
+            FROM Bookings b
+            LEFT JOIN Payments p ON b.booking_id = p.booking_id AND p.payment_status = 'Completed'
+            WHERE b.booking_id = @booking_id
+        `;
+        const bookingResult = await db.request()
+            .input('booking_id', booking_id)
+            .query(bookingQuery);
+
+        if (bookingResult.recordset.length === 0) {
+            return "Booking not found";
+        }
+
+        const booking = bookingResult.recordset[0];
+
+        // Check if booking can be refunded
+        if (!['Confirmed', 'Active'].includes(booking.booking_status)) {
+            return "Booking cannot be refunded in its current status";
+        }
+
+        if (!booking.transaction_id) {
+            return "No completed payment found for this booking";
+        }
+
+        // Process refund with Stripe
+        const refund = await stripe.refunds.create({
+            payment_intent: booking.transaction_id,
+        });
+
+        // Update payment status to Refunded
+        const updatePaymentQuery = `
+            UPDATE Payments 
+            SET payment_status = 'Refunded', 
+                updated_at = GETDATE()
+            WHERE payment_id = @payment_id
+        `;
+        
+        await db.request()
+            .input('payment_id', booking.payment_id)
+            .query(updatePaymentQuery);
+
+        // Update booking status to Cancelled
+        const updateBookingQuery = `
+            UPDATE Bookings 
+            SET booking_status = 'Cancelled', 
+                admin_notes = @refund_reason,
+                updated_at = GETDATE()
+            OUTPUT INSERTED.*
+            WHERE booking_id = @booking_id
+        `;
+        
+        const updateResult = await db.request()
+            .input('booking_id', booking_id)
+            .input('refund_reason', refund_reason)
+            .query(updateBookingQuery);
+
+        console.log('✅ Booking refund processed:', updateResult.recordset[0]);
+        return {
+            booking: updateResult.recordset[0],
+            refund_id: refund.id,
+            refund_amount: refund.amount
+        };
+    } catch (error: any) {
+        console.error('Error in refundBookingPaymentService:', error);
+        return "Failed to process refund: " + error.message;
+    }
 }
