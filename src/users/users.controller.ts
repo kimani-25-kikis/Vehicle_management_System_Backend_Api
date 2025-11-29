@@ -35,35 +35,58 @@ export const getUserById = async (c: Context) => {
 
 
 //update user by user_id
+//update user by user_id - FIXED VERSION
 export const updateUser = async (c: Context) => {
     try {
         const user_id = parseInt(c.req.param('user_id'))
         const body = await c.req.json()
 
-        //check if user exists
+        // Check if user exists
         const checkExists = await userServices.getUserByIdService(user_id);
         if (checkExists === null) {
             return c.json({ error: 'User not found' }, 404);
         }
-    //Hash password
-         //hash password
-                const saltRounds = bcrypt.genSaltSync(10);
-                const hashedPassword = bcrypt.hashSync(body.password, saltRounds);
-                body.password = hashedPassword;
 
-        const result = await userServices.updateUserService(user_id, body.first_name, body.last_name, body.email, body.phone_number, body.password);
+        // Check if email already exists (excluding current user)
+        if (body.email && body.email !== checkExists.email) {
+            const existingUser = await userServices.getUserByEmailService(body.email);
+            if (existingUser && existingUser.user_id !== user_id) {
+                return c.json({ error: 'Email already exists' }, 400);
+            }
+        }
+
+        // Only hash password if it's provided and different from current
+        let hashedPassword = checkExists.password; // Keep current password by default
+        
+        if (body.password && body.password.trim() !== '') {
+            const saltRounds = bcrypt.genSaltSync(10);
+            hashedPassword = bcrypt.hashSync(body.password, saltRounds);
+        }
+
+        const result = await userServices.updateUserService(
+            user_id, 
+            body.first_name, 
+            body.last_name, 
+            body.email, 
+            body.phone_number, 
+            hashedPassword,
+            body.address // Add address
+        );
+        
         if (result === null) {
             return c.json({ error: 'Failed to update user' }, 404);
         }
 
-        return c.json({ message: 'User updated successfully', updated_user: result }, 200);
+        return c.json({ 
+            message: 'User updated successfully', 
+            updated_user: result 
+        }, 200);
 
     } catch (error) {
         console.error('Error updating user:', error);
         return c.json({ error: 'Failed to update user' }, 500);
     }
-}
-
+} 
 
 //delete user by user_id
 export const deleteUser = async (c: Context) => {

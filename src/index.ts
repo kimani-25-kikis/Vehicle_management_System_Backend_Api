@@ -13,6 +13,8 @@ import bookingRoutes from './booking/booking.route.ts'
 import ticketRoutes from './ticket/ticket.route.ts'
 import paymentRoutes from './payment/payment.route.ts'
 import uploadRoutes from './uploads/uploads.routes.ts'
+import supportRoutes from './support/service.route.ts';
+import reviewRoutes from './review/review.route.ts'
 
 const app = new Hono()
 
@@ -63,6 +65,8 @@ app.route('/api', bookingRoutes)
 app.route('/api', paymentRoutes)
 app.route('/api', ticketRoutes)
 app.route('/api', uploadRoutes)
+app.route('/api',supportRoutes)
+app.route('/api',reviewRoutes)
 
 // 404 handler
 app.notFound((c: Context) => {
