@@ -13,7 +13,7 @@ import bookingRoutes from './booking/booking.route.ts'
 import ticketRoutes from './ticket/ticket.route.ts'
 import paymentRoutes from './payment/payment.route.ts'
 import uploadRoutes from './uploads/uploads.routes.ts'
-import supportRoutes from './support/service.route.ts';
+import supportRoutes from './support/support.route.ts';
 import reviewRoutes from './review/review.route.ts'
 
 const app = new Hono()

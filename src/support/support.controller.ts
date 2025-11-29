@@ -5,7 +5,11 @@ import * as supportServices from "./support.service.ts";
 export const createTicket = async (c: Context) => {
     try {
         const body = await c.req.json();
-        const user_id = c.customer.user_id; // From authentication middleware
+        const user_id = c.customer.user_id;
+
+        console.log("🔵 CONTROLLER - Raw request body:", body);
+        console.log("🔵 CONTROLLER - Type field:", body.type);
+        console.log("🔵 CONTROLLER - All body fields:", Object.keys(body));
 
         // Validation
         if (!body.subject || !body.description || !body.type) {
@@ -31,6 +35,8 @@ export const createTicket = async (c: Context) => {
             }
         }
 
+        console.log("✅ CONTROLLER - Validation passed, calling service...");
+
         const result = await supportServices.createTicketService({
             user_id,
             subject: body.subject,
@@ -39,6 +45,8 @@ export const createTicket = async (c: Context) => {
             booking_id: body.booking_id || null
         });
 
+        console.log("✅ CONTROLLER - Service returned:", result);
+        
         return c.json({ 
             message: 'Support ticket created successfully!',
             ticket: result 

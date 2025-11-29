@@ -27,6 +27,12 @@ export interface CreateTicketData {
 // Create a new support ticket
 export const createTicketService = async (data: CreateTicketData): Promise<SupportTicket | null> => {
     const db = getDbPool();
+
+        console.log("🟠 SERVICE - Data received:", data);
+        console.log("🟠 SERVICE - Type value:", data.type);
+        console.log("🟠 SERVICE - Type typeof:", typeof data.type);
+
+
     
     const query = `
         INSERT INTO SupportTickets (user_id, subject, description, type, booking_id, status)
