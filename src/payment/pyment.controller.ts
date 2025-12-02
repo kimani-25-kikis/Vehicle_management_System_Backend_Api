@@ -304,3 +304,97 @@ export const refundPayment = async (c: Context) => {
     return c.json({ error: error.message }, 500);
   }
 }
+// Get payment statistics (admin only)
+export const getPaymentStats = async (c: Context) => {
+  try {
+    const customer = c.customer;
+    
+    if (!customer) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (customer.user_type !== 'admin') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    // You'll need to implement this service function
+    const stats = await paymentServices.getPaymentStatsService();
+    
+    return c.json({ 
+      success: true, 
+      stats 
+    });
+  } catch (error: any) {
+    console.error('Error fetching payment stats:', error.message);
+    return c.json({ error: 'Failed to fetch payment statistics' }, 500);
+  }
+}
+
+// Update payment status (admin only)
+export const updatePaymentStatus = async (c: Context) => {
+  try {
+    const customer = c.customer;
+    const payment_id = parseInt(c.req.param('payment_id'));
+    const body = await c.req.json();
+
+    if (!customer) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (customer.user_type !== 'admin') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    if (!body.payment_status) {
+      return c.json({ error: 'Payment status is required' }, 400);
+    }
+
+    // You'll need to implement this service function
+    const result = await paymentServices.updatePaymentStatusService(
+      payment_id,
+      body.payment_status
+    );
+
+    if (typeof result === "string") {
+      return c.json({ error: result }, 400);
+    }
+
+    return c.json({ 
+      success: true,
+      message: 'Payment status updated successfully', 
+      data: result 
+    }, 200);
+  } catch (error: any) {
+    console.error('Error updating payment status:', error.message);
+    return c.json({ error: error.message }, 500);
+  }
+}
+
+// Export payments (admin only)
+export const exportPayments = async (c: Context) => {
+  try {
+    const customer = c.customer;
+    
+    if (!customer) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (customer.user_type !== 'admin') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    // Get filters from query params
+    const filters = c.req.query();
+    
+    // You'll need to implement this service function
+    const csvData = await paymentServices.exportPaymentsService(filters);
+    
+    // Return CSV file
+    c.header('Content-Type', 'text/csv');
+    c.header('Content-Disposition', `attachment; filename=payments-${new Date().toISOString().split('T')[0]}.csv`);
+    return c.text(csvData);
+  } catch (error: any) {
+    console.error('Error exporting payments:', error.message);
+    return c.json({ error: 'Failed to export payments' }, 500);
+  }
+}

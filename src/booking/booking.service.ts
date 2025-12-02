@@ -37,6 +37,9 @@ interface BookingWithDetails extends BookingResponse {
     vehicle_manufacturer: string;
     vehicle_model: string;
     rental_rate: number;
+    payment_status?: 'Pending' | 'Completed' | 'Failed' | 'Refunded';
+    payment_method?: string;
+    transaction_id?: string;
 }
 
 interface CreateBookingData {
@@ -56,6 +59,26 @@ interface CreateBookingData {
     additional_protection: boolean;
     roadside_assistance: boolean;
     booking_status: string;
+}
+
+interface BookingFilters {
+    status?: string;
+    payment_status?: string;
+    date_from?: string;
+    date_to?: string;
+    search?: string;
+    user_id?: number;
+    vehicle_id?: number;
+}
+
+interface BookingStats {
+    total_bookings: number;
+    active_rentals: number;
+    pending_approvals: number;
+    total_revenue: number;
+    today_revenue: number;
+    completed_bookings: number;
+    cancelled_bookings: number;
 }
 
 // Create new booking
@@ -82,7 +105,7 @@ export const createBookingService = async (
             SELECT COUNT(*) as overlapping_bookings
             FROM Bookings 
             WHERE vehicle_id = @vehicle_id 
-            AND booking_status IN ('Pending Payment', 'Confirmed', 'Active')
+            AND booking_status IN ('Pending', 'Confirmed', 'Active')
             AND (
                 (pickup_date BETWEEN @pickup_date AND @return_date) OR
                 (return_date BETWEEN @pickup_date AND @return_date) OR
@@ -158,11 +181,15 @@ export const getUserBookingsService = async (user_id: number): Promise<BookingWi
             u.email as user_email,
             vs.manufacturer as vehicle_manufacturer,
             vs.model as vehicle_model,
-            v.rental_rate
+            v.rental_rate,
+            p.payment_status,
+            p.payment_method,
+            p.transaction_id
         FROM Bookings b
         JOIN Users u ON b.user_id = u.user_id
         JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+        LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
         WHERE b.user_id = @user_id
         ORDER BY b.created_at DESC
     `;
@@ -172,24 +199,77 @@ export const getUserBookingsService = async (user_id: number): Promise<BookingWi
     return result.recordset;
 }
 
-// Get all bookings (admin only)
-export const getAllBookingsService = async (): Promise<BookingWithDetails[]> => {
+// Get all bookings with filters (admin only)
+export const getAllBookingsService = async (filters?: BookingFilters): Promise<BookingWithDetails[]> => {
     const db = getDbPool();
-    const query = `
+    
+    let query = `
         SELECT 
             b.*,
             u.first_name + ' ' + u.last_name as user_name,
             u.email as user_email,
             vs.manufacturer as vehicle_manufacturer,
             vs.model as vehicle_model,
-            v.rental_rate
+            v.rental_rate,
+            p.payment_status,
+            p.payment_method,
+            p.transaction_id
         FROM Bookings b
         JOIN Users u ON b.user_id = u.user_id
         JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-        ORDER BY b.created_at DESC
+        LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
+        WHERE 1=1
     `;
-    const result = await db.request().query(query);
+    
+    const request = db.request();
+    
+    // Apply filters if provided
+    if (filters) {
+        if (filters.status) {
+            query += ' AND b.booking_status = @status';
+            request.input('status', filters.status);
+        }
+        
+        if (filters.payment_status) {
+            query += ' AND p.payment_status = @payment_status';
+            request.input('payment_status', filters.payment_status);
+        }
+        
+        if (filters.date_from) {
+            query += ' AND b.created_at >= @date_from';
+            request.input('date_from', new Date(filters.date_from));
+        }
+        
+        if (filters.date_to) {
+            query += ' AND b.created_at <= @date_to';
+            request.input('date_to', new Date(filters.date_to));
+        }
+        
+        if (filters.search) {
+            query += ` AND (
+                u.first_name + ' ' + u.last_name LIKE @search OR
+                u.email LIKE @search OR
+                vs.manufacturer + ' ' + vs.model LIKE @search OR
+                b.booking_id LIKE @search
+            )`;
+            request.input('search', `%${filters.search}%`);
+        }
+        
+        if (filters.user_id) {
+            query += ' AND b.user_id = @user_id';
+            request.input('user_id', filters.user_id);
+        }
+        
+        if (filters.vehicle_id) {
+            query += ' AND b.vehicle_id = @vehicle_id';
+            request.input('vehicle_id', filters.vehicle_id);
+        }
+    }
+
+    query += ' ORDER BY b.created_at DESC';
+
+    const result = await request.query(query);
     return result.recordset;
 }
 
@@ -203,11 +283,15 @@ export const getBookingByIdService = async (booking_id: number): Promise<Booking
             u.email as user_email,
             vs.manufacturer as vehicle_manufacturer,
             vs.model as vehicle_model,
-            v.rental_rate
+            v.rental_rate,
+            p.payment_status,
+            p.payment_method,
+            p.transaction_id
         FROM Bookings b
         JOIN Users u ON b.user_id = u.user_id
         JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+        LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
         WHERE b.booking_id = @booking_id
     `;
     const result = await db.request()
@@ -427,7 +511,7 @@ export const refundBookingPaymentService = async (
         const bookingQuery = `
             SELECT b.*, p.transaction_id, p.payment_id
             FROM Bookings b
-            LEFT JOIN Payments p ON b.booking_id = p.booking_id AND p.payment_status = 'Completed'
+            LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id AND p.payment_status = 'Completed'
             WHERE b.booking_id = @booking_id
         `;
         const bookingResult = await db.request()
@@ -456,7 +540,7 @@ export const refundBookingPaymentService = async (
 
         // Update payment status to Refunded
         const updatePaymentQuery = `
-            UPDATE Payments 
+            UPDATE PaymentsTable 
             SET payment_status = 'Refunded', 
                 updated_at = GETDATE()
             WHERE payment_id = @payment_id
@@ -490,5 +574,282 @@ export const refundBookingPaymentService = async (
     } catch (error: any) {
         console.error('Error in refundBookingPaymentService:', error);
         return "Failed to process refund: " + error.message;
+    }
+}
+
+// GET BOOKING STATISTICS
+export const getBookingStatsService = async (): Promise<BookingStats> => {
+    const db = getDbPool();
+    
+    try {
+        const today = new Date();
+        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+        
+        const statsQuery = `
+            SELECT 
+                -- Total bookings
+                (SELECT COUNT(*) FROM Bookings) as total_bookings,
+                
+                -- Active rentals (Confirmed or Active status with current date within rental period)
+                (SELECT COUNT(*) FROM Bookings 
+                 WHERE booking_status IN ('Confirmed', 'Active')
+                 AND @current_date BETWEEN pickup_date AND return_date) as active_rentals,
+                
+                -- Pending approvals (Pending status)
+                (SELECT COUNT(*) FROM Bookings 
+                 WHERE booking_status = 'Pending') as pending_approvals,
+                
+                -- Total revenue from completed bookings
+                (SELECT ISNULL(SUM(b.total_amount), 0) 
+                 FROM Bookings b
+                 LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
+                 WHERE b.booking_status = 'Completed'
+                 AND p.payment_status = 'Completed') as total_revenue,
+                
+                -- Today's revenue
+                (SELECT ISNULL(SUM(b.total_amount), 0) 
+                 FROM Bookings b
+                 LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
+                 WHERE b.booking_status = 'Completed'
+                 AND p.payment_status = 'Completed'
+                 AND b.created_at BETWEEN @today_start AND @today_end) as today_revenue,
+                
+                -- Completed bookings
+                (SELECT COUNT(*) FROM Bookings 
+                 WHERE booking_status = 'Completed') as completed_bookings,
+                
+                -- Cancelled bookings
+                (SELECT COUNT(*) FROM Bookings 
+                 WHERE booking_status = 'Cancelled') as cancelled_bookings
+        `;
+        
+        const result = await db.request()
+            .input('current_date', today)
+            .input('today_start', todayStart)
+            .input('today_end', todayEnd)
+            .query(statsQuery);
+
+        return {
+            total_bookings: result.recordset[0].total_bookings || 0,
+            active_rentals: result.recordset[0].active_rentals || 0,
+            pending_approvals: result.recordset[0].pending_approvals || 0,
+            total_revenue: result.recordset[0].total_revenue || 0,
+            today_revenue: result.recordset[0].today_revenue || 0,
+            completed_bookings: result.recordset[0].completed_bookings || 0,
+            cancelled_bookings: result.recordset[0].cancelled_bookings || 0
+        };
+        
+    } catch (error: any) {
+        console.error('Error in getBookingStatsService:', error);
+        throw error;
+    }
+}
+
+// VERIFY DRIVER LICENSE
+// export const verifyDriverLicenseService = async (
+//     booking_id: number,
+//     verified: boolean,
+//     admin_notes: string
+// ): Promise<BookingWithDetails | null> => {
+//     const db = getDbPool();
+    
+//     try {
+//         const query = `
+//             UPDATE Bookings 
+//             SET verified_by_admin = @verified,
+//                 verified_at = ${verified ? 'GETDATE()' : 'NULL'},
+//                 admin_notes = @admin_notes,
+//                 updated_at = GETDATE()
+//             OUTPUT INSERTED.*
+//             WHERE booking_id = @booking_id
+//         `;
+        
+//         const result = await db.request()
+//             .input('booking_id', booking_id)
+//             .input('verified', verified)
+//             .input('admin_notes', admin_notes)
+//             .query(query);
+        
+//         if (!result.recordset[0]) {
+//             return null;
+//         }
+        
+//         // Get full booking details with user and vehicle info
+//         const fullBooking = await getBookingByIdService(booking_id);
+//         return fullBooking;
+        
+//     } catch (error: any) {
+//         console.error('Error in verifyDriverLicenseService:', error);
+//         return null;
+//     }
+// }
+
+// EXPORT BOOKINGS
+export const exportBookingsService = async (filters: BookingFilters & { format?: string }): Promise<string> => {
+    const db = getDbPool();
+    
+    try {
+        // Get filtered bookings
+        const bookings = await getAllBookingsService(filters);
+        
+        if (bookings.length === 0) {
+            return "No bookings found to export";
+        }
+        
+        const format = filters.format || 'csv';
+        
+        // Convert to CSV format
+        if (format === 'csv') {
+            const headers = [
+                'Booking ID',
+                'User Name',
+                'User Email',
+                'Vehicle',
+                'Pickup Location',
+                'Return Location',
+                'Pickup Date',
+                'Return Date',
+                'Total Amount',
+                'Booking Status',
+                'Payment Status',
+                'Driver License Verified',
+                'Created At'
+            ].join(',');
+            
+            const rows = bookings.map(booking => [
+                booking.booking_id,
+                `"${booking.user_name || ''}"`,
+                `"${booking.user_email || ''}"`,
+                `"${booking.vehicle_manufacturer || ''} ${booking.vehicle_model || ''}"`,
+                `"${booking.pickup_location || ''}"`,
+                `"${booking.return_location || ''}"`,
+                new Date(booking.pickup_date).toISOString(),
+                new Date(booking.return_date).toISOString(),
+                booking.total_amount || 0,
+                booking.booking_status || '',
+                booking.payment_status || 'N/A',
+                booking.verified_by_admin ? 'Yes' : 'No',
+                new Date(booking.created_at).toISOString()
+            ].join(','));
+            
+            return [headers, ...rows].join('\n');
+        }
+        
+        // For Excel format, return CSV as fallback
+        return "Excel export not implemented yet, using CSV format:\n\n" + 
+               await exportBookingsService({ ...filters, format: 'csv' });
+        
+    } catch (error: any) {
+        console.error('Error in exportBookingsService:', error);
+        throw error;
+    }
+}
+
+export const downloadDriverLicenseService = async (
+    booking_id: number,
+    side: 'front' | 'back'
+): Promise<{ url: string; filename: string } | string> => {
+    const db = getDbPool();
+    
+    try {
+        // Get booking with license URLs
+        const query = `
+            SELECT 
+                driver_license_front_url,
+                driver_license_back_url,
+                driver_license_number,
+                user_id,
+                (SELECT first_name + ' ' + last_name FROM Users WHERE user_id = b.user_id) as user_name
+            FROM Bookings b
+            WHERE booking_id = @booking_id
+        `;
+        
+        const result = await db.request()
+            .input('booking_id', booking_id)
+            .query(query);
+        
+        if (result.recordset.length === 0) {
+            return "Booking not found";
+        }
+        
+        const booking = result.recordset[0];
+        const licenseUrl = side === 'front' 
+            ? booking.driver_license_front_url 
+            : booking.driver_license_back_url;
+        
+        if (!licenseUrl) {
+            return `Driver license ${side} image not available`;
+        }
+        
+        // Generate filename
+        const sanitizedUserName = (booking.user_name || 'user').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const filename = `driver-license-${side}-${sanitizedUserName}-${booking.driver_license_number || booking_id}.jpg`;
+        
+        return {
+            url: licenseUrl,
+            filename: filename
+        };
+        
+    } catch (error: any) {
+        console.error('Error in downloadDriverLicenseService:', error);
+        return "Failed to get driver license: " + error.message;
+    }
+}
+
+// ... (keep all your existing functions, but update verifyDriverLicenseService) ...
+
+// UPDATED verifyDriverLicenseService to optionally download
+export const verifyDriverLicenseService = async (
+    booking_id: number,
+    verified: boolean,
+    admin_notes: string,
+    downloadLicense?: boolean // Add optional parameter
+): Promise<BookingWithDetails | null> => {
+    const db = getDbPool();
+    
+    try {
+        const query = `
+            UPDATE Bookings 
+            SET verified_by_admin = @verified,
+                verified_at = ${verified ? 'GETDATE()' : 'NULL'},
+                admin_notes = @admin_notes,
+                updated_at = GETDATE()
+            OUTPUT INSERTED.*
+            WHERE booking_id = @booking_id
+        `;
+        
+        const result = await db.request()
+            .input('booking_id', booking_id)
+            .input('verified', verified)
+            .input('admin_notes', admin_notes)
+            .query(query);
+        
+        if (!result.recordset[0]) {
+            return null;
+        }
+        
+        // If downloadLicense is true, get the license URLs
+        let licenseInfo = null;
+        if (downloadLicense) {
+            licenseInfo = {
+                front: await downloadDriverLicenseService(booking_id, 'front'),
+                back: await downloadDriverLicenseService(booking_id, 'back')
+            };
+        }
+        
+        // Get full booking details
+        const fullBooking = await getBookingByIdService(booking_id);
+        
+        // Add license info to response if available
+        if (licenseInfo && fullBooking) {
+            (fullBooking as any).license_download_info = licenseInfo;
+        }
+        
+        return fullBooking;
+        
+    } catch (error: any) {
+        console.error('Error in verifyDriverLicenseService:', error);
+        return null;
     }
 }

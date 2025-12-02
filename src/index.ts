@@ -15,6 +15,7 @@ import paymentRoutes from './payment/payment.route.ts'
 import uploadRoutes from './uploads/uploads.routes.ts'
 import supportRoutes from './support/support.route.ts';
 import reviewRoutes from './review/review.route.ts'
+import dataRoutes from './admin_dashboard/admin_dashboard.route.ts'
 
 const app = new Hono()
 
@@ -23,7 +24,7 @@ app.use(
   '*',
   cors({
     origin: 'http://localhost:5173',
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE','PATCH', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   })
@@ -61,12 +62,13 @@ app.get('/api', (c: Context) => {
 app.route('/api', userRoutes)
 app.route('/api', authRoutes)
 app.route('/api', vehicleRoutes)
-app.route('/api', bookingRoutes)
+app.route('/api/bookings', bookingRoutes)
 app.route('/api', paymentRoutes)
 app.route('/api', ticketRoutes)
 app.route('/api', uploadRoutes)
 app.route('/api',supportRoutes)
 app.route('/api',reviewRoutes)
+app.route('/api',dataRoutes)
 
 // 404 handler
 app.notFound((c: Context) => {

@@ -13,10 +13,13 @@ paymentRoutes.post('/payments/confirm', paymentControllers.confirmPayment)
 paymentRoutes.get('/booking/:booking_id', paymentControllers.getPaymentByBookingId)
 
 // Admin only routes
-paymentRoutes.get('/', adminRoleAuth, paymentControllers.getAllPayments)
-paymentRoutes.post('/refund', paymentControllers.refundPayment)
+paymentRoutes.get('/payments', adminRoleAuth, paymentControllers.getAllPayments)
+paymentRoutes.post('/payments/refund', paymentControllers.refundPayment)
+
+paymentRoutes.get('/payments/stats', adminRoleAuth, paymentControllers.getPaymentStats) // ADD THIS
+paymentRoutes.get('/payments/export', adminRoleAuth, paymentControllers.exportPayments) // ADD THIS
 
 // Webhook route (no auth required for webhooks)
-paymentRoutes.post('/webhook', paymentControllers.processPaymentWebhook)
+paymentRoutes.post('/payments/webhook', paymentControllers.processPaymentWebhook)
 
 export default paymentRoutes

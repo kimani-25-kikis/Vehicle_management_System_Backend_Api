@@ -384,3 +384,162 @@ export const getBookingByIdService = async (booking_id: number): Promise<any> =>
     .query(query);
   return result.recordset[0] || null;
 }
+
+// Get payment statistics
+export const getPaymentStatsService = async (): Promise<any> => {
+  const db = getDbPool();
+  
+  try {
+    const query = `
+      SELECT 
+        SUM(CASE WHEN payment_status = 'Completed' THEN amount ELSE 0 END) as total_revenue,
+        COUNT(CASE WHEN payment_status = 'Completed' THEN 1 END) as completed_payments,
+        COUNT(CASE WHEN payment_status = 'Pending' THEN 1 END) as pending_payments,
+        COUNT(CASE WHEN payment_status = 'Failed' THEN 1 END) as failed_payments,
+        SUM(CASE WHEN payment_status = 'Refunded' THEN amount ELSE 0 END) as refunded_amount,
+        SUM(CASE WHEN payment_status = 'Completed' AND CAST(created_at AS DATE) = CAST(GETDATE() AS DATE) THEN amount ELSE 0 END) as today_revenue,
+        SUM(CASE WHEN payment_status = 'Completed' AND MONTH(created_at) = MONTH(GETDATE()) AND YEAR(created_at) = YEAR(GETDATE()) THEN amount ELSE 0 END) as monthly_revenue
+      FROM PaymentsTable
+    `;
+    
+    const result = await db.request().query(query);
+    return result.recordset[0];
+  } catch (error: any) {
+    console.error('Error in getPaymentStatsService:', error);
+    throw new Error("Failed to fetch payment statistics: " + error.message);
+  }
+}
+
+// Update payment status
+export const updatePaymentStatusService = async (
+  payment_id: number,
+  payment_status: string
+): Promise<PaymentResponse | string> => {
+  const db = getDbPool();
+  
+  try {
+    const updateQuery = `
+      UPDATE PaymentsTable 
+      SET payment_status = @payment_status, 
+          updated_at = GETDATE()
+      OUTPUT INSERTED.*
+      WHERE payment_id = @payment_id
+    `;
+    
+    const result = await db.request()
+      .input('payment_id', payment_id)
+      .input('payment_status', payment_status)
+      .query(updateQuery);
+
+    if (result.recordset.length === 0) {
+      return "Payment not found";
+    }
+
+    // If marking as refunded, also update booking status
+    if (payment_status === 'Refunded') {
+      const paymentQuery = `
+        SELECT booking_id FROM PaymentsTable WHERE payment_id = @payment_id
+      `;
+      const paymentResult = await db.request()
+        .input('payment_id', payment_id)
+        .query(paymentQuery);
+
+      if (paymentResult.recordset.length > 0) {
+        const booking_id = paymentResult.recordset[0].booking_id;
+        
+        const updateBookingQuery = `
+          UPDATE Bookings 
+          SET booking_status = 'Cancelled', updated_at = GETDATE()
+          WHERE booking_id = @booking_id
+        `;
+        
+        await db.request()
+          .input('booking_id', booking_id)
+          .query(updateBookingQuery);
+      }
+    }
+
+    return result.recordset[0];
+  } catch (error: any) {
+    console.error('Error in updatePaymentStatusService:', error);
+    return "Failed to update payment status: " + error.message;
+  }
+}
+
+// Export payments to CSV
+export const exportPaymentsService = async (filters: any): Promise<string> => {
+  const db = getDbPool();
+  
+  try {
+    let query = `
+      SELECT 
+        p.payment_id,
+        p.booking_id,
+        u.first_name + ' ' + u.last_name as user_name,
+        u.email as user_email,
+        p.amount,
+        p.payment_status,
+        p.payment_method,
+        p.transaction_id,
+        FORMAT(p.created_at, 'yyyy-MM-dd HH:mm:ss') as created_at,
+        FORMAT(p.updated_at, 'yyyy-MM-dd HH:mm:ss') as updated_at,
+        b.booking_status,
+        vs.model as vehicle_model
+      FROM PaymentsTable p
+      JOIN Bookings b ON p.booking_id = b.booking_id
+      JOIN Users u ON b.user_id = u.user_id
+      JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+      JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+      WHERE 1=1
+    `;
+    
+    const request = db.request();
+    
+    // Apply filters
+    if (filters.payment_status) {
+      query += ' AND p.payment_status = @payment_status';
+      request.input('payment_status', filters.payment_status);
+    }
+    
+    if (filters.payment_method) {
+      query += ' AND p.payment_method = @payment_method';
+      request.input('payment_method', filters.payment_method);
+    }
+    
+    if (filters.date_from) {
+      query += ' AND CAST(p.created_at AS DATE) >= @date_from';
+      request.input('date_from', filters.date_from);
+    }
+    
+    if (filters.date_to) {
+      query += ' AND CAST(p.created_at AS DATE) <= @date_to';
+      request.input('date_to', filters.date_to);
+    }
+    
+    if (filters.search) {
+      query += ' AND (u.first_name + \' \' + u.last_name LIKE @search OR u.email LIKE @search OR p.transaction_id LIKE @search)';
+      request.input('search', `%${filters.search}%`);
+    }
+    
+    query += ' ORDER BY p.created_at DESC';
+    
+    const result = await request.query(query);
+    
+    // Convert to CSV
+    if (result.recordset.length === 0) {
+      return 'No data to export';
+    }
+    
+    const headers = Object.keys(result.recordset[0]).join(',');
+    const rows = result.recordset.map(row => 
+      Object.values(row).map(value => 
+        typeof value === 'string' ? `"${value.replace(/"/g, '""')}"` : value
+      ).join(',')
+    );
+    
+    return [headers, ...rows].join('\n');
+  } catch (error: any) {
+    console.error('Error in exportPaymentsService:', error);
+    throw new Error("Failed to export payments: " + error.message);
+  }
+}

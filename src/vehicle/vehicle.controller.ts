@@ -2,8 +2,6 @@ import { type Context } from "hono"
 import * as vehicleServices from "./vehicle.service.ts";
 
 // Get all vehicles with optional filters
-// Get all vehicles with optional filters
-// In vehicle.controller.ts - Update getAllVehicles
 export const getAllVehicles = async (c: Context) => {
     try {
         const location = c.req.query('location');
@@ -13,9 +11,11 @@ export const getAllVehicles = async (c: Context) => {
         const fuel_type = c.req.query('fuel_type');
         const min_seating = c.req.query('min_seating');
         const max_seating = c.req.query('max_seating');
-        const price_range = c.req.query('price_range'); // Get price_range from query
+        const price_range = c.req.query('price_range');
         const transmission = c.req.query('transmission');
         const search = c.req.query('search');
+        const availability = c.req.query('availability');
+        const status = c.req.query('status'); // New: status filter (available, rented, maintenance)
 
         // Convert price_range to min_price and max_price
         let min_price, max_price;
@@ -35,7 +35,7 @@ export const getAllVehicles = async (c: Context) => {
                     break;
                 case '200+':
                     min_price = 200;
-                    max_price = undefined; // No upper limit
+                    max_price = undefined;
                     break;
                 default:
                     min_price = undefined;
@@ -51,6 +51,8 @@ export const getAllVehicles = async (c: Context) => {
             fuel_type,
             transmission,
             search,
+            status: status as 'available' | 'rented' | 'maintenance' | undefined,
+            availability: availability ? availability === 'true' : undefined,
             min_seating: min_seating ? parseInt(min_seating) : undefined,
             max_seating: max_seating ? parseInt(max_seating) : undefined,
             min_price: min_price !== undefined ? min_price : (c.req.query('min_price') ? parseFloat(c.req.query('min_price') as string) : undefined),
@@ -80,6 +82,7 @@ export const getAllVehicles = async (c: Context) => {
         return c.json({ error: 'Failed to fetch vehicles' }, 500);
     }
 }
+
 // Get vehicle by vehicle_id
 export const getVehicleById = async (c: Context) => {
     const vehicle_id = parseInt(c.req.param('vehicle_id'))
@@ -124,6 +127,7 @@ export const createVehicle = async (c: Context) => {
             body.vehicle_spec_id,
             body.rental_rate,
             body.current_location,
+            
             body.manufacturer,
             body.model,
             body.year,
@@ -134,7 +138,8 @@ export const createVehicle = async (c: Context) => {
             body.color,
             body.features,
             body.vehicle_type,
-            body.image_url // ✅ ADDED IMAGE_URL PARAMETER
+            body.image_url,
+            body.availability,
         );
 
         if (typeof result === "string") {
@@ -178,6 +183,10 @@ export const updateVehicle = async (c: Context) => {
             return c.json({ error: 'Failed to update vehicle' }, 404);
         }
 
+        if (typeof result === "string") {
+            return c.json({ error: result }, 400);
+        }
+
         return c.json({ message: 'Vehicle updated successfully', updated_vehicle: result }, 200);
 
     } catch (error) {
@@ -207,6 +216,10 @@ export const deleteVehicle = async (c: Context) => {
         const result = await vehicleServices.deleteVehicleService(vehicle_id);
         if (result === "Failed to delete vehicle") {
             return c.json({ error: 'Failed to delete vehicle' }, 404);
+        }
+
+        if (result === "Cannot delete vehicle with active bookings") {
+            return c.json({ error: result }, 400);
         }
 
         return c.json({ message: result, deleted_vehicle: check }, 200);
@@ -273,6 +286,10 @@ export const updateVehicleAvailability = async (c: Context) => {
 
         if (result === null) {
             return c.json({ error: 'Failed to update vehicle availability' }, 404);
+        }
+
+        if (typeof result === "string") {
+            return c.json({ error: result }, 400);
         }
 
         return c.json({ 

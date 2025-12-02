@@ -16,6 +16,63 @@ export const getAllUsers = async (c: Context) => {
     }
 }
 
+// ADD THIS FUNCTION - Create new user
+export const createUser = async (c: Context) => {
+    try {
+        const body = await c.req.json();
+
+        // Validate required fields
+        if (!body.first_name || !body.last_name || !body.email) {
+            return c.json({ error: 'First name, last name, and email are required' }, 400);
+        }
+
+        // Check if user already exists by email
+        const existingUser = await userServices.getUserByEmailService(body.email);
+        if (existingUser) {
+            return c.json({ error: 'User with this email already exists' }, 409);
+        }
+
+        // Generate a default password if not provided
+        let password = body.password;
+        if (!password || password.trim() === '') {
+            // Generate a random password or use a default one
+            // You might want to send this to the user via email
+            password = 'DefaultPassword123!';
+        }
+
+        // Hash the password
+        const saltRounds = bcrypt.genSaltSync(10);
+        const hashedPassword = bcrypt.hashSync(password, saltRounds);
+
+        // Create the user
+        const result = await userServices.createUserService(
+            body.first_name,
+            body.last_name,
+            body.email,
+            body.phone_number || null,
+            hashedPassword,
+            body.user_type || 'user', // Default to 'user' if not specified
+            body.address || null
+        );
+
+        if (result === null) {
+            return c.json({ error: 'Failed to create user' }, 500);
+        }
+
+        // Don't return the password in the response
+        const { password: _, ...userWithoutPassword } = result;
+
+        return c.json({ 
+            message: 'User created successfully', 
+            user: userWithoutPassword 
+        }, 201);
+
+    } catch (error) {
+        console.error('Error creating user:', error);
+        return c.json({ error: 'Failed to create user' }, 500);
+    }
+}
+
 //get user by user_id
 export const getUserById = async (c: Context) => {
     const user_id = parseInt(c.req.param('user_id'))

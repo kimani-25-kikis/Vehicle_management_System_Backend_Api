@@ -8,20 +8,27 @@ const bookingRoutes = new Hono()
 bookingRoutes.use('*', bothRolesAuth)
 
 // User routes
-bookingRoutes.post('/bookings', bookingControllers.createBooking)
-bookingRoutes.get('/bookings/my-bookings', bookingControllers.getUserBookings)
-bookingRoutes.get('/bookings/:booking_id', bookingControllers.getBookingById)
-bookingRoutes.delete('/bookings/:booking_id', bookingControllers.cancelBooking)
+bookingRoutes.post('', bookingControllers.createBooking)
+bookingRoutes.get('/my-bookings', bookingControllers.getUserBookings)
+bookingRoutes.get('/:booking_id', bookingControllers.getBookingById)
+bookingRoutes.delete('/:booking_id', bookingControllers.cancelBooking)
 
-// NEW: Payment-related booking routes
+// Payment-related routes
 bookingRoutes.post('/:booking_id/confirm-payment', bookingControllers.confirmBookingPayment)
 bookingRoutes.put('/:booking_id/extend', bookingControllers.extendBooking)
 
 // Admin only routes
-bookingRoutes.get('/', adminRoleAuth, bookingControllers.getAllBookings)
-bookingRoutes.put('/:booking_id/status', adminRoleAuth, bookingControllers.updateBookingStatus)
+bookingRoutes.get('',  bookingControllers.getAllBookings)
+bookingRoutes.put('/:booking_id/status',  bookingControllers.updateBookingStatus)
+bookingRoutes.post('/:booking_id/refund',  bookingControllers.refundBookingPayment)
 
-// NEW: Admin payment management
-bookingRoutes.post('/:booking_id/refund', adminRoleAuth, bookingControllers.refundBookingPayment)
+// NEW: Admin statistics and management routes
+bookingRoutes.get('/stats', bookingControllers.getBookingStats)
+bookingRoutes.patch('/:booking_id/verify-license', bookingControllers.verifyDriverLicense)
+bookingRoutes.get('/export',  bookingControllers.exportBookings)
+
+// NEW: Driver license download routes
+bookingRoutes.get('/:booking_id/license/front',  bookingControllers.downloadDriverLicenseFront)
+bookingRoutes.get('/:booking_id/license/back',  bookingControllers.downloadDriverLicenseBack)
 
 export default bookingRoutes

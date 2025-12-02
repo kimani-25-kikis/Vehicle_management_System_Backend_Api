@@ -1,18 +1,26 @@
-import {Hono} from 'hono'
-import * as analyticsControllers from './admin_dashboard.controller.ts'
-import { adminRoleAuth } from '../middleware/bearAuth.ts'
+// dashboard-data.route.ts
+import { Hono } from 'hono'
+import * as dataControllers from './admin_dashboard.controller.ts'
+import { adminRoleAuth, bothRolesAuth } from '../middleware/bearAuth.js'
 
-const analyticsRoutes = new Hono()
+const dataRoutes = new Hono()
 
-// Apply admin auth middleware to all analytics routes
-analyticsRoutes.use('*', adminRoleAuth)
+// ----------------------------
+// ADMIN DASHBOARD ROUTES
+// ----------------------------
 
-// Analytics endpoints
-analyticsRoutes.get('/analytics/overview', analyticsControllers.getOverviewStats)
-analyticsRoutes.get('/analytics/revenue', analyticsControllers.getRevenueChartData)
-analyticsRoutes.get('/analytics/top-vehicles', analyticsControllers.getTopRentedVehicles)
-analyticsRoutes.get('/analytics/booking-trends', analyticsControllers.getBookingTrends)
-analyticsRoutes.get('/analytics/user-stats', analyticsControllers.getUserStats)
-analyticsRoutes.get('/analytics/location-insights', analyticsControllers.getLocationInsights)
+// GET admin dashboard summary stats
+dataRoutes.get('/admin',adminRoleAuth, dataControllers.getAdminData)
 
-export default analyticsRoutes
+// ----------------------------
+// USER DASHBOARD ROUTES
+// ----------------------------
+
+// GET dashboard data for a specific user
+dataRoutes.get(
+  '/dashboard/:user_id',
+  // bothRolesAuth,             // Enable if you want Admin/User auth checking
+  dataControllers.getUserDataById
+)
+
+export default dataRoutes

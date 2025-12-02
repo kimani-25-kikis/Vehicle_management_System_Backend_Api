@@ -22,7 +22,7 @@ interface VehicleSpecification {
     color: string;
     features: string | null;
     vehicle_type: string;
-    image_url: string | null; // ✅ ADDED IMAGE_URL
+    image_url: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -35,6 +35,7 @@ interface VehicleWithSpecification {
     created_at: string;
     updated_at: string;
     specification: VehicleSpecification;
+    status?: 'available' | 'rented' | 'maintenance';
 }
 
 interface VehicleFilters {
@@ -47,11 +48,49 @@ interface VehicleFilters {
     max_seating?: number;
     min_price?: number;
     max_price?: number;
+    transmission?: string;
+    search?: string;
+    availability?: boolean;
+    status?: 'available' | 'rented' | 'maintenance';
+}
+
+// Helper function to check if vehicle has active bookings
+const checkVehicleRentalStatus = async (vehicle_id: number): Promise<boolean> => {
+    const db = getDbPool();
+    const query = `
+        SELECT COUNT(*) as active_bookings 
+        FROM Bookings 
+        WHERE vehicle_id = @vehicle_id 
+        AND booking_status IN ('Pending', 'Confirmed', 'Active')
+        AND return_date >= GETDATE()
+    `;
+    
+    const result = await db.request()
+        .input('vehicle_id', vehicle_id)
+        .query(query);
+    
+    return result.recordset[0].active_bookings > 0;
+}
+
+// Helper function to check if vehicle can be modified/deleted
+const canModifyVehicle = async (vehicle_id: number): Promise<boolean> => {
+    const db = getDbPool();
+    const query = `
+        SELECT COUNT(*) as active_bookings 
+        FROM Bookings 
+        WHERE vehicle_id = @vehicle_id 
+        AND booking_status IN ('Pending', 'Confirmed', 'Active')
+    `;
+    
+    const result = await db.request()
+        .input('vehicle_id', vehicle_id)
+        .query(query);
+    
+    return result.recordset[0].active_bookings === 0;
 }
 
 // Get all vehicles with optional filters
-// In vehicle.service.ts - Update getAllVehiclesService
-export const getAllVehiclesService = async (filters?: VehicleFilters & { search?: string }): Promise<VehicleWithSpecification[]> => {
+export const getAllVehiclesService = async (filters?: VehicleFilters): Promise<VehicleWithSpecification[]> => {
     const db = getDbPool();
     
     let query = `
@@ -78,12 +117,25 @@ export const getAllVehiclesService = async (filters?: VehicleFilters & { search?
             vs.updated_at as spec_updated_at
         FROM Vehicles v
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-        WHERE 1=1 AND v.availability = 1
+        WHERE 1=1
     `;
     
     const request = db.request();
 
-    // Search functionality (searches across multiple fields)
+    // Handle status filter (available, rented, maintenance)
+    if (filters?.status) {
+        if (filters.status === 'maintenance') {
+            query += ' AND v.availability = 0';
+        } else if (filters.status === 'available') {
+            query += ' AND v.availability = 1';
+        }
+        // For 'rented' status, we'll filter after checking bookings
+    } else if (filters?.availability !== undefined) {
+        query += ' AND v.availability = @availability';
+        request.input('availability', filters.availability);
+    }
+
+    // Search functionality
     if (filters?.search) {
         query += ' AND (vs.manufacturer LIKE @search OR vs.model LIKE @search OR vs.features LIKE @search OR v.current_location LIKE @search)';
         request.input('search', `%${filters.search}%`);
@@ -114,6 +166,11 @@ export const getAllVehiclesService = async (filters?: VehicleFilters & { search?
         request.input('fuel_type', filters.fuel_type);
     }
     
+    if (filters?.transmission) {
+        query += ' AND vs.transmission = @transmission';
+        request.input('transmission', filters.transmission);
+    }
+    
     if (filters?.min_seating) {
         query += ' AND vs.seating_capacity >= @min_seating';
         request.input('min_seating', filters.min_seating);
@@ -138,31 +195,51 @@ export const getAllVehiclesService = async (filters?: VehicleFilters & { search?
 
     const result = await request.query(query);
     
-    // Structure the data with nested specification
-    const vehiclesWithSpecs: VehicleWithSpecification[] = result.recordset.map(vehicle => ({
-        vehicle_id: vehicle.vehicle_id,
-        rental_rate: vehicle.rental_rate,
-        availability: vehicle.availability,
-        current_location: vehicle.current_location,
-        created_at: vehicle.created_at,
-        updated_at: vehicle.updated_at,
-        specification: {
-            vehicle_spec_id: vehicle.vehicle_spec_id,
-            manufacturer: vehicle.manufacturer,
-            model: vehicle.model,
-            year: vehicle.year,
-            fuel_type: vehicle.fuel_type,
-            engine_capacity: vehicle.engine_capacity,
-            transmission: vehicle.transmission,
-            seating_capacity: vehicle.seating_capacity,
-            color: vehicle.color,
-            features: vehicle.features,
-            vehicle_type: vehicle.vehicle_type,
-            image_url: vehicle.image_url,
-            created_at: vehicle.spec_created_at,
-            updated_at: vehicle.spec_updated_at
+    // Structure the data with nested specification and determine status
+    const vehiclesWithSpecs: VehicleWithSpecification[] = [];
+    
+    for (const vehicle of result.recordset) {
+        // Determine vehicle status
+        let status: 'available' | 'rented' | 'maintenance';
+        
+        if (!vehicle.availability) {
+            status = 'maintenance';
+        } else {
+            const isRented = await checkVehicleRentalStatus(vehicle.vehicle_id);
+            status = isRented ? 'rented' : 'available';
         }
-    }));
+        
+        // Skip if filtering by 'rented' status and vehicle is not rented
+        if (filters?.status === 'rented' && status !== 'rented') {
+            continue;
+        }
+        
+        vehiclesWithSpecs.push({
+            vehicle_id: vehicle.vehicle_id,
+            rental_rate: vehicle.rental_rate,
+            availability: vehicle.availability,
+            current_location: vehicle.current_location,
+            created_at: vehicle.created_at,
+            updated_at: vehicle.updated_at,
+            specification: {
+                vehicle_spec_id: vehicle.vehicle_spec_id,
+                manufacturer: vehicle.manufacturer,
+                model: vehicle.model,
+                year: vehicle.year,
+                fuel_type: vehicle.fuel_type,
+                engine_capacity: vehicle.engine_capacity,
+                transmission: vehicle.transmission,
+                seating_capacity: vehicle.seating_capacity,
+                color: vehicle.color,
+                features: vehicle.features,
+                vehicle_type: vehicle.vehicle_type,
+                image_url: vehicle.image_url,
+                created_at: vehicle.spec_created_at,
+                updated_at: vehicle.spec_updated_at
+            },
+            status: status
+        });
+    }
     
     return vehiclesWithSpecs;
 }
@@ -189,7 +266,7 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
             vs.color,
             vs.features,
             vs.vehicle_type,
-            vs.image_url, -- ✅ ADDED IMAGE_URL COLUMN
+            vs.image_url,
             vs.created_at as spec_created_at,
             vs.updated_at as spec_updated_at
         FROM Vehicles v
@@ -205,6 +282,16 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
     }
 
     const vehicle = result.recordset[0];
+    
+    // Determine status
+    let status: 'available' | 'rented' | 'maintenance';
+    if (!vehicle.availability) {
+        status = 'maintenance';
+    } else {
+        const isRented = await checkVehicleRentalStatus(vehicle_id);
+        status = isRented ? 'rented' : 'available';
+    }
+    
     return {
         vehicle_id: vehicle.vehicle_id,
         rental_rate: vehicle.rental_rate,
@@ -212,6 +299,7 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
         current_location: vehicle.current_location,
         created_at: vehicle.created_at,
         updated_at: vehicle.updated_at,
+        status: status,
         specification: {
             vehicle_spec_id: vehicle.vehicle_spec_id,
             manufacturer: vehicle.manufacturer,
@@ -224,7 +312,7 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
             color: vehicle.color,
             features: vehicle.features,
             vehicle_type: vehicle.vehicle_type,
-            image_url: vehicle.image_url, // ✅ ADDED IMAGE_URL
+            image_url: vehicle.image_url,
             created_at: vehicle.spec_created_at,
             updated_at: vehicle.spec_updated_at
         }
@@ -246,7 +334,8 @@ export const createVehicleService = async (
     color?: string,
     features?: string,
     vehicle_type?: string,
-    image_url?: string // ✅ ADDED IMAGE_URL PARAMETER
+    image_url?: string,
+    availability?: boolean  // Add this parameter
 ): Promise<VehicleWithSpecification | string> => {
     const db = getDbPool();
     
@@ -277,23 +366,24 @@ export const createVehicleService = async (
                 .input('color', color || null)
                 .input('features', features || null)
                 .input('vehicle_type', vehicle_type)
-                .input('image_url', image_url || null) // ✅ ADDED IMAGE_URL INPUT
+                .input('image_url', image_url || null)
                 .query(specQuery);
 
             final_vehicle_spec_id = specResult.recordset[0].vehicle_spec_id;
         }
 
-        // Create the vehicle
+        // Create the vehicle WITH availability
         const vehicleQuery = `
-            INSERT INTO Vehicles (vehicle_spec_id, rental_rate, current_location)
+            INSERT INTO Vehicles (vehicle_spec_id, rental_rate, current_location, availability)
             OUTPUT INSERTED.*
-            VALUES (@vehicle_spec_id, @rental_rate, @current_location)
+            VALUES (@vehicle_spec_id, @rental_rate, @current_location, @availability)
         `;
         
         const vehicleResult = await db.request()
             .input('vehicle_spec_id', final_vehicle_spec_id)
             .input('rental_rate', rental_rate)
             .input('current_location', current_location)
+            .input('availability', availability !== undefined ? availability : true)  // Default to true if not specified
             .query(vehicleQuery);
 
         const vehicle = vehicleResult.recordset[0];
@@ -305,15 +395,20 @@ export const createVehicleService = async (
         return "Failed to create vehicle";
     }
 }
-
 // Update vehicle by vehicle_id
 export const updateVehicleService = async (
     vehicle_id: number,
     rental_rate?: number,
     availability?: boolean,
     current_location?: string
-): Promise<VehicleWithSpecification | null> => {
+): Promise<VehicleWithSpecification | null | string> => {
     const db = getDbPool();
+    
+    // Check if vehicle can be modified
+    const canModify = await canModifyVehicle(vehicle_id);
+    if (!canModify) {
+        return "Cannot update vehicle with active bookings";
+    }
     
     let query = 'UPDATE Vehicles SET ';
     const updates: string[] = [];
@@ -356,19 +451,9 @@ export const updateVehicleService = async (
 export const deleteVehicleService = async (vehicle_id: number): Promise<string> => {
     const db = getDbPool();
     
-    // Check if vehicle has active bookings
-    const checkBookingsQuery = `
-        SELECT COUNT(*) as booking_count 
-        FROM Bookings 
-        WHERE vehicle_id = @vehicle_id 
-        AND booking_status IN ('Pending', 'Confirmed', 'Active')
-    `;
-    
-    const bookingsResult = await db.request()
-        .input('vehicle_id', vehicle_id)
-        .query(checkBookingsQuery);
-
-    if (bookingsResult.recordset[0].booking_count > 0) {
+    // Check if vehicle can be deleted
+    const canDelete = await canModifyVehicle(vehicle_id);
+    if (!canDelete) {
         return "Cannot delete vehicle with active bookings";
     }
 
@@ -404,7 +489,7 @@ export const getVehicleSpecificationsService = async (): Promise<any[]> => {
             color,
             features,
             vehicle_type,
-            image_url, -- ✅ ADDED IMAGE_URL COLUMN
+            image_url,
             created_at,
             updated_at
         FROM VehicleSpecifications 
@@ -418,8 +503,15 @@ export const getVehicleSpecificationsService = async (): Promise<any[]> => {
 export const updateVehicleAvailabilityService = async (
     vehicle_id: number,
     availability: boolean
-): Promise<VehicleWithSpecification | null> => {
+): Promise<VehicleWithSpecification | null | string> => {
     const db = getDbPool();
+    
+    // Check if vehicle can be modified
+    const canModify = await canModifyVehicle(vehicle_id);
+    if (!canModify) {
+        return "Cannot update availability for vehicle with active bookings";
+    }
+    
     const query = `
         UPDATE Vehicles 
         SET availability = @availability, updated_at = GETDATE() 

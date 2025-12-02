@@ -22,7 +22,7 @@ const isReturnAfterPickup = (pickupDateStr: string, returnDateStr: string): bool
 // Create new booking
 export const createBooking = async (c: Context) => {
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         const body = await c.req.json()
 
         // Validate required fields for new table structure
@@ -70,7 +70,7 @@ export const createBooking = async (c: Context) => {
             insurance_type: body.insurance_type,
             additional_protection: body.additional_protection || false,
             roadside_assistance: body.roadside_assistance !== undefined ? body.roadside_assistance : true,
-            booking_status: 'Pending' // Start as Pending, will change to Pending Payment after payment intent
+            booking_status: 'Pending'
         });
 
         if (typeof result === "string") {
@@ -92,7 +92,7 @@ export const createBooking = async (c: Context) => {
 // Get user's bookings
 export const getUserBookings = async (c: Context) => {
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         const result = await bookingServices.getUserBookingsService(customer.user_id);
         
         if (result.length === 0) {
@@ -105,16 +105,27 @@ export const getUserBookings = async (c: Context) => {
     }
 }
 
-// Get all bookings (admin only)
+// Get all bookings with filters (admin only)
 export const getAllBookings = async (c: Context) => {
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         
         if (customer.user_type !== 'admin') {
             return c.json({ error: 'Unauthorized' }, 403);
         }
 
-        const result = await bookingServices.getAllBookingsService();
+        // Get query parameters for filtering
+        const filters = {
+            status: c.req.query('status'),
+            payment_status: c.req.query('payment_status'),
+            date_from: c.req.query('date_from'),
+            date_to: c.req.query('date_to'),
+            search: c.req.query('search'),
+            user_id: c.req.query('user_id') ? parseInt(c.req.query('user_id')!) : undefined,
+            vehicle_id: c.req.query('vehicle_id') ? parseInt(c.req.query('vehicle_id')!) : undefined
+        };
+
+        const result = await bookingServices.getAllBookingsService(filters);
         
         if (result.length === 0) {
             return c.json({ message: 'No bookings found' }, 404);
@@ -130,7 +141,7 @@ export const getAllBookings = async (c: Context) => {
 export const getBookingById = async (c: Context) => {
     const booking_id = parseInt(c.req.param('booking_id'))
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         
         const result = await bookingServices.getBookingByIdService(booking_id);
         if (result === null) {
@@ -149,11 +160,11 @@ export const getBookingById = async (c: Context) => {
     }
 }
 
-// Update booking status (admin only) - Updated for payment flow
+// Update booking status (admin only)
 export const updateBookingStatus = async (c: Context) => {
     try {
         const booking_id = parseInt(c.req.param('booking_id'))
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         const body = await c.req.json()
 
         // Only admins can update booking status
@@ -161,8 +172,7 @@ export const updateBookingStatus = async (c: Context) => {
             return c.json({ error: 'Unauthorized' }, 403);
         }
 
-        // Updated valid statuses for payment flow
-        const validStatuses = ['Pending', 'Pending Payment', 'Confirmed', 'Active', 'Completed', 'Cancelled', 'Rejected'];
+        const validStatuses = ['Pending', 'Confirmed', 'Active', 'Completed', 'Cancelled', 'Rejected'];
         if (!body.booking_status || !validStatuses.includes(body.booking_status)) {
             return c.json({ error: 'Valid booking status is required' }, 400);
         }
@@ -193,7 +203,7 @@ export const updateBookingStatus = async (c: Context) => {
 export const cancelBooking = async (c: Context) => {
     const booking_id = parseInt(c.req.param('booking_id'))
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         
         const booking = await bookingServices.getBookingByIdService(booking_id);
         if (booking === null) {
@@ -222,10 +232,10 @@ export const cancelBooking = async (c: Context) => {
     }
 }
 
-// NEW: Confirm booking payment
+// Confirm booking payment
 export const confirmBookingPayment = async (c: Context) => {
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         const booking_id = parseInt(c.req.param('booking_id'));
         const { payment_intent_id } = await c.req.json();
 
@@ -254,10 +264,10 @@ export const confirmBookingPayment = async (c: Context) => {
     }
 }
 
-// NEW: Extend booking
+// Extend booking
 export const extendBooking = async (c: Context) => {
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         const booking_id = parseInt(c.req.param('booking_id'));
         const { new_return_date, additional_amount } = await c.req.json();
 
@@ -293,10 +303,10 @@ export const extendBooking = async (c: Context) => {
     }
 }
 
-// NEW: Refund booking payment (admin only)
+// Refund booking payment (admin only)
 export const refundBookingPayment = async (c: Context) => {
     try {
-        const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+        const customer = c.customer;
         const booking_id = parseInt(c.req.param('booking_id'));
         const { refund_reason } = await c.req.json();
 
@@ -326,5 +336,217 @@ export const refundBookingPayment = async (c: Context) => {
     } catch (error: any) {
         console.error('Error refunding booking payment:', error.message);
         return c.json({ error: error.message }, 500);
+    }
+}
+
+// GET BOOKING STATISTICS (Admin only)
+export const getBookingStats = async (c: Context) => {
+    try {
+        const customer = c.customer;
+        
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
+        const stats = await bookingServices.getBookingStatsService();
+        
+        return c.json({ 
+            success: true, 
+            stats 
+        }, 200);
+    } catch (error: any) {
+        console.error('Error fetching booking stats:', error.message);
+        return c.json({ error: 'Failed to fetch booking statistics' }, 500);
+    }
+}
+
+// // VERIFY DRIVER LICENSE (Admin only)
+// export const verifyDriverLicense = async (c: Context) => {
+//     try {
+//         const booking_id = parseInt(c.req.param('booking_id'))
+//         const customer = c.customer;
+//         const body = await c.req.json()
+
+//         // Only admins can verify licenses
+//         if (customer.user_type !== 'admin') {
+//             return c.json({ error: 'Unauthorized' }, 403);
+//         }
+
+//         if (typeof body.verified !== 'boolean') {
+//             return c.json({ error: 'Verified field must be a boolean' }, 400);
+//         }
+
+//         const result = await bookingServices.verifyDriverLicenseService(
+//             booking_id, 
+//             body.verified,
+//             body.admin_notes || ''
+//         );
+        
+//         if (result === null) {
+//             return c.json({ error: 'Booking not found or verification failed' }, 404);
+//         }
+
+//         return c.json({ 
+//             success: true,
+//             message: `Driver license ${body.verified ? 'verified' : 'unverified'} successfully`, 
+//             data: result 
+//         }, 200);
+
+//     } catch (error) {
+//         console.error('Error verifying driver license:', error);
+//         return c.json({ error: 'Failed to verify driver license' }, 500);
+//     }
+// }
+
+// EXPORT BOOKINGS (Admin only)
+export const exportBookings = async (c: Context) => {
+    try {
+        const customer = c.customer;
+        
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
+        // Get query parameters for filtering
+        const filters = {
+            status: c.req.query('status'),
+            payment_status: c.req.query('payment_status'),
+            date_from: c.req.query('date_from'),
+            date_to: c.req.query('date_to'),
+            search: c.req.query('search'),
+            format: c.req.query('format') || 'csv'
+        };
+
+        const result = await bookingServices.exportBookingsService(filters);
+        
+        if (typeof result === "string" && result.startsWith("No bookings found")) {
+            return c.json({ error: result }, 404);
+        }
+
+        if (typeof result === "string" && result.startsWith("Excel export not implemented")) {
+            return c.json({ error: result }, 400);
+        }
+
+        // Set appropriate headers for file download
+        const contentType = filters.format === 'excel' 
+            ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+            : 'text/csv';
+        
+        const extension = filters.format === 'excel' ? '.xlsx' : '.csv';
+        const filename = `bookings-${new Date().toISOString().split('T')[0]}${extension}`;
+
+        c.header('Content-Type', contentType);
+        c.header('Content-Disposition', `attachment; filename="${filename}"`);
+        
+        return c.body(result);
+
+    } catch (error: any) {
+        console.error('Error exporting bookings:', error.message);
+        return c.json({ error: 'Failed to export bookings' }, 500);
+    }
+}
+
+export const downloadDriverLicenseFront = async (c: Context) => {
+    try {
+        const booking_id = parseInt(c.req.param('booking_id'))
+        const customer = c.customer;
+        
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+        
+        const result = await bookingServices.downloadDriverLicenseService(booking_id, 'front');
+        
+        if (typeof result === "string") {
+            return c.json({ error: result }, 400);
+        }
+        
+        // Return download info
+        return c.json({
+            success: true,
+            download_url: result.url,
+            filename: result.filename
+        }, 200);
+        
+    } catch (error: any) {
+        console.error('Error downloading driver license front:', error.message);
+        return c.json({ error: 'Failed to download driver license' }, 500);
+    }
+}
+
+// ADD THIS CONTROLLER: Download driver license back
+export const downloadDriverLicenseBack = async (c: Context) => {
+    try {
+        const booking_id = parseInt(c.req.param('booking_id'))
+        const customer = c.customer;
+        
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+        
+        const result = await bookingServices.downloadDriverLicenseService(booking_id, 'back');
+        
+        if (typeof result === "string") {
+            return c.json({ error: result }, 400);
+        }
+        
+        return c.json({
+            success: true,
+            download_url: result.url,
+            filename: result.filename
+        }, 200);
+        
+    } catch (error: any) {
+        console.error('Error downloading driver license back:', error.message);
+        return c.json({ error: 'Failed to download driver license' }, 500);
+    }
+}
+
+// UPDATED verifyDriverLicense controller to support download
+export const verifyDriverLicense = async (c: Context) => {
+    try {
+        const booking_id = parseInt(c.req.param('booking_id'))
+        const customer = c.customer;
+        const body = await c.req.json()
+
+        // Only admins can verify licenses
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+
+        if (typeof body.verified !== 'boolean') {
+            return c.json({ error: 'Verified field must be a boolean' }, 400);
+        }
+
+        // Check if download is requested
+        const downloadLicense = body.download_license || false;
+
+        const result = await bookingServices.verifyDriverLicenseService(
+            booking_id, 
+            body.verified,
+            body.admin_notes || '',
+            downloadLicense
+        );
+        
+        if (result === null) {
+            return c.json({ error: 'Booking not found or verification failed' }, 404);
+        }
+
+        const response: any = {
+            success: true,
+            message: `Driver license ${body.verified ? 'verified' : 'unverified'} successfully`, 
+            data: result
+        };
+
+        // Add download info if requested
+        if (downloadLicense && (result as any).license_download_info) {
+            response.license_download_info = (result as any).license_download_info;
+        }
+
+        return c.json(response, 200);
+
+    } catch (error) {
+        console.error('Error verifying driver license:', error);
+        return c.json({ error: 'Failed to verify driver license' }, 500);
     }
 }

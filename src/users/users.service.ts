@@ -97,6 +97,41 @@ export const updateUserService = async (
     const result = await request.query(query);
     return result.recordset[0] || null;
 }
+export const createUserService = async (
+    first_name: string,
+    last_name: string,
+    email: string,
+    phone_number: string | null,
+    password: string,
+    user_type: string = 'user',
+    address: string | null = null
+): Promise<UserResponse | null> => {
+    const db = getDbPool();
+    
+    const query = `
+        INSERT INTO Users 
+        (first_name, last_name, email, phone_number, password, user_type, address, created_at, updated_at)
+        OUTPUT INSERTED.*
+        VALUES (@first_name, @last_name, @email, @phone_number, @password, @user_type, @address, GETDATE(), GETDATE())
+    `;
+    
+    try {
+        const result = await db.request()
+            .input('first_name', first_name)
+            .input('last_name', last_name)
+            .input('email', email)
+            .input('phone_number', phone_number)
+            .input('password', password)
+            .input('user_type', user_type)
+            .input('address', address)
+            .query(query);
+            
+        return result.recordset[0] || null;
+    } catch (error) {
+        console.error('Error in createUserService:', error);
+        throw error;
+    }
+}
 
 //delete user by user_id
 export const deleteUserService = async (user_id:number): Promise<string> => {
