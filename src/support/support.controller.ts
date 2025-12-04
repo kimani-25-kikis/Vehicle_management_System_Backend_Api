@@ -5,11 +5,11 @@ import * as supportServices from "./support.service.ts";
 export const createTicket = async (c: Context) => {
     try {
         const body = await c.req.json();
-        const user_id = c.customer.user_id;
+        const user_id = c.customer?.user_id;
 
-        console.log("🔵 CONTROLLER - Raw request body:", body);
-        console.log("🔵 CONTROLLER - Type field:", body.type);
-        console.log("🔵 CONTROLLER - All body fields:", Object.keys(body));
+        if (!user_id) {
+            return c.json({ error: 'User authentication required' }, 401);
+        }
 
         // Validation
         if (!body.subject || !body.description || !body.type) {
@@ -17,10 +17,16 @@ export const createTicket = async (c: Context) => {
         }
 
         // Validate ticket type
-        const validTypes = ['damage_report', 'general_inquiry', 'technical_issue'];
+        const validTypes = ['damage_report', 'general_inquiry', 'technical_issue', 'billing', 'complaint', 'feedback'];
         if (!validTypes.includes(body.type)) {
-            return c.json({ error: 'Invalid ticket type. Must be: damage_report, general_inquiry, or technical_issue' }, 400);
+            return c.json({ 
+                error: `Invalid ticket type. Must be one of: ${validTypes.join(', ')}` 
+            }, 400);
         }
+
+        // Validate priority
+        const validPriorities = ['urgent', 'high', 'medium', 'low'];
+        const priority = validPriorities.includes(body.priority) ? body.priority : 'medium';
 
         // For damage reports, booking_id is required
         if (body.type === 'damage_report' && !body.booking_id) {
@@ -35,40 +41,56 @@ export const createTicket = async (c: Context) => {
             }
         }
 
-        console.log("✅ CONTROLLER - Validation passed, calling service...");
-
         const result = await supportServices.createTicketService({
             user_id,
             subject: body.subject,
             description: body.description,
             type: body.type,
+            priority,
             booking_id: body.booking_id || null
         });
 
-        console.log("✅ CONTROLLER - Service returned:", result);
+        if (!result) {
+            return c.json({ error: 'Failed to create ticket' }, 500);
+        }
         
         return c.json({ 
+            success: true,
             message: 'Support ticket created successfully!',
             ticket: result 
         }, 201);
 
     } catch (error: any) {
         console.error('Error creating support ticket:', error.message);
-        return c.json({ error: 'Failed to create support ticket' }, 500);
+        return c.json({ 
+            success: false,
+            error: 'Failed to create support ticket' 
+        }, 500);
     }
 }
 
 // Get user's own tickets
 export const getMyTickets = async (c: Context) => {
     try {
-        const user_id = c.customer.user_id;
+        const user_id = c.customer?.user_id;
+        
+        if (!user_id) {
+            return c.json({ error: 'User authentication required' }, 401);
+        }
+
         const result = await supportServices.getUserTicketsService(user_id);
         
-        return c.json({ tickets: result });
+        return c.json({ 
+            success: true,
+            tickets: result 
+        });
 
     } catch (error: any) {
         console.error('Error fetching user tickets:', error.message);
-        return c.json({ error: 'Failed to fetch tickets' }, 500);
+        return c.json({ 
+            success: false,
+            error: 'Failed to fetch tickets' 
+        }, 500);
     }
 }
 
@@ -76,42 +98,65 @@ export const getMyTickets = async (c: Context) => {
 export const getTicketById = async (c: Context) => {
     try {
         const ticket_id = parseInt(c.req.param('ticket_id'));
-        const user_id = c.customer.user_id;
+        const user_id = c.customer?.user_id;
         
         const result = await supportServices.getTicketByIdService(ticket_id);
         
         if (!result) {
-            return c.json({ error: 'Ticket not found' }, 404);
+            return c.json({ 
+                success: false,
+                error: 'Ticket not found' 
+            }, 404);
         }
 
         // Users can only see their own tickets (unless admin)
-        if (result.user_id !== user_id && c.customer.user_type !== 'admin') {
-            return c.json({ error: 'Access denied' }, 403);
+        if (result.user_id !== user_id && c.customer?.user_type !== 'admin') {
+            return c.json({ 
+                success: false,
+                error: 'Access denied' 
+            }, 403);
         }
 
-        return c.json({ ticket: result });
+        return c.json({ 
+            success: true,
+            ticket: result 
+        });
 
     } catch (error: any) {
         console.error('Error fetching ticket:', error.message);
-        return c.json({ error: 'Failed to fetch ticket' }, 500);
+        return c.json({ 
+            success: false,
+            error: 'Failed to fetch ticket' 
+        }, 500);
     }
 }
 
 // Admin: Get all tickets
 export const getAllTickets = async (c: Context) => {
     try {
-        const { status, type } = c.req.query();
+        const status = c.req.query('status');
+        const type = c.req.query('type');
+        const priority = c.req.query('priority');
+        const search = c.req.query('search');
         
         const result = await supportServices.getAllTicketsService(
             status || null,
-            type || null
+            type || null,
+            priority || null,
+            search || null
         );
         
-        return c.json({ tickets: result });
+        return c.json({ 
+            success: true,
+            tickets: result 
+        });
 
     } catch (error: any) {
         console.error('Error fetching all tickets:', error.message);
-        return c.json({ error: 'Failed to fetch tickets' }, 500);
+        return c.json({ 
+            success: false,
+            error: 'Failed to fetch tickets' 
+        }, 500);
     }
 }
 
@@ -122,28 +167,41 @@ export const updateTicketStatus = async (c: Context) => {
         const body = await c.req.json();
         
         if (!body.status) {
-            return c.json({ error: 'Status is required' }, 400);
+            return c.json({ 
+                success: false,
+                error: 'Status is required' 
+            }, 400);
         }
 
-        const validStatuses = ['Open', 'In Progress', 'Resolved', 'Closed'];
+        const validStatuses = ['Open', 'In Progress', 'Resolved', 'Closed', 'On Hold'];
         if (!validStatuses.includes(body.status)) {
-            return c.json({ error: 'Invalid status. Must be: Open, In Progress, Resolved, or Closed' }, 400);
+            return c.json({ 
+                success: false,
+                error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` 
+            }, 400);
         }
 
         const result = await supportServices.updateTicketStatusService(ticket_id, body.status);
         
         if (!result) {
-            return c.json({ error: 'Ticket not found' }, 404);
+            return c.json({ 
+                success: false,
+                error: 'Ticket not found' 
+            }, 404);
         }
 
         return c.json({ 
+            success: true,
             message: 'Ticket status updated successfully',
             ticket: result 
         });
 
     } catch (error: any) {
         console.error('Error updating ticket status:', error.message);
-        return c.json({ error: 'Failed to update ticket status' }, 500);
+        return c.json({ 
+            success: false,
+            error: 'Failed to update ticket status' 
+        }, 500);
     }
 }
 
@@ -154,22 +212,247 @@ export const addAdminNotes = async (c: Context) => {
         const body = await c.req.json();
         
         if (!body.admin_notes) {
-            return c.json({ error: 'Admin notes are required' }, 400);
+            return c.json({ 
+                success: false,
+                error: 'Admin notes are required' 
+            }, 400);
         }
 
         const result = await supportServices.addAdminNotesService(ticket_id, body.admin_notes);
         
         if (!result) {
-            return c.json({ error: 'Ticket not found' }, 404);
+            return c.json({ 
+                success: false,
+                error: 'Ticket not found' 
+            }, 404);
         }
 
         return c.json({ 
+            success: true,
             message: 'Admin notes added successfully',
             ticket: result 
         });
 
     } catch (error: any) {
         console.error('Error adding admin notes:', error.message);
-        return c.json({ error: 'Failed to add admin notes' }, 500);
+        return c.json({ 
+            success: false,
+            error: 'Failed to add admin notes' 
+        }, 500);
+    }
+}
+
+// Admin: Assign ticket
+export const assignTicket = async (c: Context) => {
+    try {
+        const ticket_id = parseInt(c.req.param('ticket_id'));
+        const body = await c.req.json();
+        
+        if (!body.assigned_to) {
+            return c.json({ 
+                success: false,
+                error: 'Assignee name is required' 
+            }, 400);
+        }
+
+        const result = await supportServices.assignTicketService(ticket_id, body.assigned_to);
+        
+        if (!result) {
+            return c.json({ 
+                success: false,
+                error: 'Ticket not found' 
+            }, 404);
+        }
+
+        return c.json({ 
+            success: true,
+            message: 'Ticket assigned successfully',
+            ticket: result 
+        });
+
+    } catch (error: any) {
+        console.error('Error assigning ticket:', error.message);
+        return c.json({ 
+            success: false,
+            error: 'Failed to assign ticket' 
+        }, 500);
+    }
+}
+
+// Add reply to ticket
+export const addTicketReply = async (c: Context) => {
+    try {
+        const ticket_id = parseInt(c.req.param('ticket_id'));
+        const user_id = c.customer?.user_id;
+        const body = await c.req.json();
+        
+        if (!user_id) {
+            return c.json({ error: 'User authentication required' }, 401);
+        }
+
+        if (!body.message) {
+            return c.json({ 
+                success: false,
+                error: 'Message is required' 
+            }, 400);
+        }
+
+        // Check if user has access to this ticket
+        const ticket = await supportServices.getTicketByIdService(ticket_id);
+        if (!ticket) {
+            return c.json({ 
+                success: false,
+                error: 'Ticket not found' 
+            }, 404);
+        }
+
+        // Users can only reply to their own tickets (unless admin)
+        if (ticket.user_id !== user_id && c.customer?.user_type !== 'admin') {
+            return c.json({ 
+                success: false,
+                error: 'Access denied' 
+            }, 403);
+        }
+
+        const is_admin_reply = c.customer?.user_type === 'admin';
+        
+        const result = await supportServices.addTicketReplyService(
+            ticket_id, 
+            user_id, 
+            body.message, 
+            is_admin_reply
+        );
+        
+        if (!result) {
+            return c.json({ 
+                success: false,
+                error: 'Failed to add reply' 
+            }, 500);
+        }
+
+        return c.json({ 
+            success: true,
+            message: 'Reply added successfully',
+            ticket: result 
+        });
+
+    } catch (error: any) {
+        console.error('Error adding reply:', error.message);
+        return c.json({ 
+            success: false,
+            error: 'Failed to add reply' 
+        }, 500);
+    }
+}
+
+// Upload attachment
+export const uploadAttachment = async (c: Context) => {
+    try {
+        const ticket_id = parseInt(c.req.param('ticket_id'));
+        const user_id = c.customer?.user_id;
+        
+        if (!user_id) {
+            return c.json({ error: 'User authentication required' }, 401);
+        }
+
+        const formData = await c.req.formData();
+        const file = formData.get('file') as File;
+        
+        if (!file) {
+            return c.json({ 
+                success: false,
+                error: 'File is required' 
+            }, 400);
+        }
+
+        // Check if user has access to this ticket
+        const ticket = await supportServices.getTicketByIdService(ticket_id);
+        if (!ticket) {
+            return c.json({ 
+                success: false,
+                error: 'Ticket not found' 
+            }, 404);
+        }
+
+        // Users can only add attachments to their own tickets (unless admin)
+        if (ticket.user_id !== user_id && c.customer?.user_type !== 'admin') {
+            return c.json({ 
+                success: false,
+                error: 'Access denied' 
+            }, 403);
+        }
+
+        // Validate file size (max 10MB)
+        const maxSize = 10 * 1024 * 1024; // 10MB
+        if (file.size > maxSize) {
+            return c.json({ 
+                success: false,
+                error: 'File size exceeds 10MB limit' 
+            }, 400);
+        }
+
+        // Validate file type
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'text/plain'];
+        if (!allowedTypes.includes(file.type)) {
+            return c.json({ 
+                success: false,
+                error: 'File type not allowed. Allowed: JPEG, PNG, GIF, PDF, TXT' 
+            }, 400);
+        }
+
+        // In a real implementation, you would upload to cloud storage
+        // For now, we'll simulate it
+        const file_url = `/uploads/tickets/${ticket_id}/${Date.now()}_${file.name}`;
+        
+        const result = await supportServices.uploadAttachmentService(
+            ticket_id,
+            file.name,
+            file_url,
+            file.type,
+            file.size,
+            user_id
+        );
+
+        if (!result) {
+            return c.json({ 
+                success: false,
+                error: 'Failed to upload attachment' 
+            }, 500);
+        }
+
+        return c.json({ 
+            success: true,
+            message: 'Attachment uploaded successfully',
+            url: file_url,
+            filename: file.name,
+            file_type: file.type,
+            file_size: file.size
+        });
+
+    } catch (error: any) {
+        console.error('Error uploading attachment:', error.message);
+        return c.json({ 
+            success: false,
+            error: 'Failed to upload attachment' 
+        }, 500);
+    }
+}
+
+// Get ticket statistics
+export const getTicketStats = async (c: Context) => {
+    try {
+        const result = await supportServices.getTicketStatsService();
+        
+        return c.json({ 
+            success: true,
+            stats: result 
+        });
+
+    } catch (error: any) {
+        console.error('Error fetching ticket stats:', error.message);
+        return c.json({ 
+            success: false,
+            error: 'Failed to fetch ticket statistics' 
+        }, 500);
     }
 }

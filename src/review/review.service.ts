@@ -201,3 +201,61 @@ export const getReviewByIdService = async (review_id: number): Promise<Review | 
     
     return result.recordset[0] || null;
 }
+export const markForHomepageService = async (review_id: number): Promise<Review | null> => {
+    const db = getDbPool();
+    
+    const query = `
+        UPDATE Reviews 
+        SET show_on_homepage = 1, updated_at = GETDATE()
+        OUTPUT INSERTED.*
+        WHERE review_id = @review_id AND is_approved = 1
+    `;
+    
+    const result = await db.request()
+        .input('review_id', review_id)
+        .query(query);
+    
+    return result.recordset[0] || null;
+}
+
+// Unmark review from homepage
+export const unmarkFromHomepageService = async (review_id: number): Promise<Review | null> => {
+    const db = getDbPool();
+    
+    const query = `
+        UPDATE Reviews 
+        SET show_on_homepage = 0, updated_at = GETDATE()
+        OUTPUT INSERTED.*
+        WHERE review_id = @review_id
+    `;
+    
+    const result = await db.request()
+        .input('review_id', review_id)
+        .query(query);
+    
+    return result.recordset[0] || null;
+}
+
+// Get reviews for homepage (only approved and marked for homepage)
+export const getHomepageReviewsService = async (): Promise<Review[]> => {
+    const db = getDbPool();
+    
+    const query = `
+        SELECT 
+            r.*,
+            u.first_name,
+            u.last_name,
+            v.manufacturer,
+            v.model
+        FROM Reviews r
+        INNER JOIN Users u ON r.user_id = u.user_id
+        INNER JOIN Vehicles v ON r.vehicle_id = v.vehicle_id
+        WHERE r.is_approved = 1 
+          AND r.show_on_homepage = 1
+        ORDER BY r.updated_at DESC
+        LIMIT 10  -- Limit to 10 reviews for homepage
+    `;
+    
+    const result = await db.request().query(query);
+    return result.recordset;
+}

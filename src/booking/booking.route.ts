@@ -17,18 +17,17 @@ bookingRoutes.delete('/:booking_id', bookingControllers.cancelBooking)
 bookingRoutes.post('/:booking_id/confirm-payment', bookingControllers.confirmBookingPayment)
 bookingRoutes.put('/:booking_id/extend', bookingControllers.extendBooking)
 
-// Admin only routes
-bookingRoutes.get('',  bookingControllers.getAllBookings)
-bookingRoutes.put('/:booking_id/status',  bookingControllers.updateBookingStatus)
-bookingRoutes.post('/:booking_id/refund',  bookingControllers.refundBookingPayment)
+// ========== ADMIN ROUTES (with adminRoleAuth) ==========
+bookingRoutes.get('', adminRoleAuth, bookingControllers.getAllBookings)
+bookingRoutes.put('/:booking_id/status', adminRoleAuth, bookingControllers.updateBookingStatus)
+bookingRoutes.post('/:booking_id/refund', adminRoleAuth, bookingControllers.refundBookingPayment)
+bookingRoutes.patch('/:booking_id/verify-license', adminRoleAuth, bookingControllers.verifyDriverLicense)
+bookingRoutes.get('/export', adminRoleAuth, bookingControllers.exportBookings)
 
-// NEW: Admin statistics and management routes
-bookingRoutes.get('/stats', bookingControllers.getBookingStats)
-bookingRoutes.patch('/:booking_id/verify-license', bookingControllers.verifyDriverLicense)
-bookingRoutes.get('/export',  bookingControllers.exportBookings)
-
-// NEW: Driver license download routes
+// These were missing adminRoleAuth!
+bookingRoutes.get('/stats',  bookingControllers.getBookingStats)
 bookingRoutes.get('/:booking_id/license/front',  bookingControllers.downloadDriverLicenseFront)
 bookingRoutes.get('/:booking_id/license/back',  bookingControllers.downloadDriverLicenseBack)
 
 export default bookingRoutes
+

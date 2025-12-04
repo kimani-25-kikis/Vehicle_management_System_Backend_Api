@@ -211,14 +211,19 @@ export const getAllBookingsService = async (filters?: BookingFilters): Promise<B
             vs.manufacturer as vehicle_manufacturer,
             vs.model as vehicle_model,
             v.rental_rate,
-            p.payment_status,
-            p.payment_method,
-            p.transaction_id
+            p_latest.payment_status,
+            p_latest.payment_method,
+            p_latest.transaction_id
         FROM Bookings b
         JOIN Users u ON b.user_id = u.user_id
         JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-        LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
+        LEFT JOIN (
+            SELECT 
+                p1.*,
+                ROW_NUMBER() OVER (PARTITION BY p1.booking_id ORDER BY p1.created_at DESC) as rn
+            FROM PaymentsTable p1
+        ) p_latest ON b.booking_id = p_latest.booking_id AND p_latest.rn = 1
         WHERE 1=1
     `;
     
@@ -232,7 +237,7 @@ export const getAllBookingsService = async (filters?: BookingFilters): Promise<B
         }
         
         if (filters.payment_status) {
-            query += ' AND p.payment_status = @payment_status';
+            query += ' AND p_latest.payment_status = @payment_status';
             request.input('payment_status', filters.payment_status);
         }
         
@@ -284,14 +289,19 @@ export const getBookingByIdService = async (booking_id: number): Promise<Booking
             vs.manufacturer as vehicle_manufacturer,
             vs.model as vehicle_model,
             v.rental_rate,
-            p.payment_status,
-            p.payment_method,
-            p.transaction_id
+            p_latest.payment_status,
+            p_latest.payment_method,
+            p_latest.transaction_id
         FROM Bookings b
         JOIN Users u ON b.user_id = u.user_id
         JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
         JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-        LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
+        LEFT JOIN (
+            SELECT 
+                p1.*,
+                ROW_NUMBER() OVER (PARTITION BY p1.booking_id ORDER BY p1.created_at DESC) as rn
+            FROM PaymentsTable p1
+        ) p_latest ON b.booking_id = p_latest.booking_id AND p_latest.rn = 1
         WHERE b.booking_id = @booking_id
     `;
     const result = await db.request()
@@ -646,44 +656,7 @@ export const getBookingStatsService = async (): Promise<BookingStats> => {
     }
 }
 
-// VERIFY DRIVER LICENSE
-// export const verifyDriverLicenseService = async (
-//     booking_id: number,
-//     verified: boolean,
-//     admin_notes: string
-// ): Promise<BookingWithDetails | null> => {
-//     const db = getDbPool();
-    
-//     try {
-//         const query = `
-//             UPDATE Bookings 
-//             SET verified_by_admin = @verified,
-//                 verified_at = ${verified ? 'GETDATE()' : 'NULL'},
-//                 admin_notes = @admin_notes,
-//                 updated_at = GETDATE()
-//             OUTPUT INSERTED.*
-//             WHERE booking_id = @booking_id
-//         `;
-        
-//         const result = await db.request()
-//             .input('booking_id', booking_id)
-//             .input('verified', verified)
-//             .input('admin_notes', admin_notes)
-//             .query(query);
-        
-//         if (!result.recordset[0]) {
-//             return null;
-//         }
-        
-//         // Get full booking details with user and vehicle info
-//         const fullBooking = await getBookingByIdService(booking_id);
-//         return fullBooking;
-        
-//     } catch (error: any) {
-//         console.error('Error in verifyDriverLicenseService:', error);
-//         return null;
-//     }
-// }
+
 
 // EXPORT BOOKINGS
 export const exportBookingsService = async (filters: BookingFilters & { format?: string }): Promise<string> => {

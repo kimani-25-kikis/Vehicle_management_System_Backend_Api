@@ -1,5 +1,6 @@
 import { type Context } from "hono";
 import * as reviewServices from "./review.service.ts";
+import getDbPool from '../db/db.config.ts'
 
 // Create a new review
 export const createReview = async (c: Context) => {
@@ -148,5 +149,91 @@ export const getReviewById = async (c: Context) => {
     } catch (error: any) {
         console.error('Error fetching review:', error.message);
         return c.json({ error: 'Failed to fetch review' }, 500);
+    }
+}
+export const getReviewCounts = async (c: Context) => {
+    try {
+        const db = await getDbPool();
+        
+        const query = `
+            SELECT 
+                COUNT(*) as total,
+                SUM(CASE WHEN is_approved = 1 THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN is_approved = 0 AND admin_notes IS NULL THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN is_approved = 0 AND admin_notes IS NOT NULL THEN 1 ELSE 0 END) as flagged
+            FROM Reviews
+        `;
+        
+        const result = await db.request().query(query);
+        
+        return c.json({ 
+            total: parseInt(result.recordset[0].total),
+            approved: parseInt(result.recordset[0].approved),
+            pending: parseInt(result.recordset[0].pending),
+            flagged: parseInt(result.recordset[0].flagged)
+        });
+
+    } catch (error: any) {
+        console.error('Error fetching review counts:', error.message);
+        return c.json({ error: 'Failed to fetch review counts' }, 500);
+    }
+}
+
+export const markForHomepage = async (c: Context) => {
+    try {
+        const review_id = parseInt(c.req.param('review_id'));
+        
+        const result = await reviewServices.markForHomepageService(review_id);
+        
+        if (!result) {
+            return c.json({ error: 'Review not found or not approved' }, 404);
+        }
+
+        return c.json({ 
+            message: 'Review marked for homepage display',
+            review: result 
+        });
+
+    } catch (error: any) {
+        console.error('Error marking review for homepage:', error.message);
+        return c.json({ error: 'Failed to mark review for homepage' }, 500);
+    }
+}
+
+// Unmark review from homepage
+export const unmarkFromHomepage = async (c: Context) => {
+    try {
+        const review_id = parseInt(c.req.param('review_id'));
+        
+        const result = await reviewServices.unmarkFromHomepageService(review_id);
+        
+        if (!result) {
+            return c.json({ error: 'Review not found' }, 404);
+        }
+
+        return c.json({ 
+            message: 'Review removed from homepage',
+            review: result 
+        });
+
+    } catch (error: any) {
+        console.error('Error unmarking review from homepage:', error.message);
+        return c.json({ error: 'Failed to remove review from homepage' }, 500);
+    }
+}
+
+// Get homepage reviews (public endpoint)
+export const getHomepageReviews = async (c: Context) => {
+    try {
+        const result = await reviewServices.getHomepageReviewsService();
+        
+        return c.json({ 
+            reviews: result,
+            count: result.length 
+        });
+
+    } catch (error: any) {
+        console.error('Error fetching homepage reviews:', error.message);
+        return c.json({ error: 'Failed to fetch homepage reviews' }, 500);
     }
 }

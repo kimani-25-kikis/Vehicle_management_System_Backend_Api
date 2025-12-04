@@ -16,5 +16,13 @@ reviewRoutes.get('/reviews/admin/all', adminRoleAuth, reviewControllers.getAllRe
 reviewRoutes.patch('/reviews/admin/approve/:review_id', adminRoleAuth, reviewControllers.approveReview);
 reviewRoutes.patch('/reviews/admin/reject/:review_id', adminRoleAuth, reviewControllers.rejectReview);
 reviewRoutes.get('/reviews/admin/:review_id', adminRoleAuth, reviewControllers.getReviewById);
+reviewRoutes.get('/reviews/admin/counts', adminRoleAuth, reviewControllers.getReviewCounts);
+
+reviewRoutes.patch('/reviews/admin/homepage/mark/:review_id', adminRoleAuth, reviewControllers.markForHomepage);
+reviewRoutes.patch('/reviews/admin/homepage/unmark/:review_id', adminRoleAuth, reviewControllers.unmarkFromHomepage);
+
+// Public route for homepage reviews
+reviewRoutes.get('/reviews/homepage', reviewControllers.getHomepageReviews);
+
 
 export default reviewRoutes;
