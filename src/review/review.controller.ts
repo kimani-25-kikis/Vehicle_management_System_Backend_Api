@@ -6,7 +6,7 @@ import getDbPool from '../db/db.config.ts'
 export const createReview = async (c: Context) => {
     try {
         const body = await c.req.json();
-        const user_id = c.customer.user_id; // From authentication middleware
+        const user_id = c.customer.user_id; 
 
         // Validation
         if (!body.booking_id || !body.vehicle_id || !body.rating || !body.comment) {
@@ -151,6 +151,7 @@ export const getReviewById = async (c: Context) => {
         return c.json({ error: 'Failed to fetch review' }, 500);
     }
 }
+// review.controller.ts - Add getReviewCounts function
 export const getReviewCounts = async (c: Context) => {
     try {
         const db = await getDbPool();
@@ -167,10 +168,10 @@ export const getReviewCounts = async (c: Context) => {
         const result = await db.request().query(query);
         
         return c.json({ 
-            total: parseInt(result.recordset[0].total),
-            approved: parseInt(result.recordset[0].approved),
-            pending: parseInt(result.recordset[0].pending),
-            flagged: parseInt(result.recordset[0].flagged)
+            total: parseInt(result.recordset[0].total) || 0,
+            approved: parseInt(result.recordset[0].approved) || 0,
+            pending: parseInt(result.recordset[0].pending) || 0,
+            flagged: parseInt(result.recordset[0].flagged) || 0
         });
 
     } catch (error: any) {
@@ -178,7 +179,6 @@ export const getReviewCounts = async (c: Context) => {
         return c.json({ error: 'Failed to fetch review counts' }, 500);
     }
 }
-
 export const markForHomepage = async (c: Context) => {
     try {
         const review_id = parseInt(c.req.param('review_id'));
