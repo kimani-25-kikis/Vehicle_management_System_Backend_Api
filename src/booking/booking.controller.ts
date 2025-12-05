@@ -96,7 +96,7 @@ export const getUserBookings = async (c: Context) => {
         const result = await bookingServices.getUserBookingsService(customer.user_id);
         
         if (result.length === 0) {
-            return c.json({ message: 'No bookings found' }, 404);
+            return c.json({ succes:true,booking:[] }, 404);
         }
         return c.json({ success: true, booking: result });
     } catch (error: any) {

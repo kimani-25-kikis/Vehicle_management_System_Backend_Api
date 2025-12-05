@@ -4,18 +4,17 @@ import { bothRolesAuth, adminRoleAuth } from '../middleware/bearAuth.ts'
 
 const bookingRoutes = new Hono()
 
-// Apply auth middleware to all routes
+// ========== USER ROUTES (with bothRolesAuth) ==========
 bookingRoutes.use('*', bothRolesAuth)
+bookingRoutes.get('/admin-stats', adminRoleAuth, bookingControllers.getBookingStats)
 
-// User routes
+// User bookings
 bookingRoutes.post('', bookingControllers.createBooking)
 bookingRoutes.get('/my-bookings', bookingControllers.getUserBookings)
 bookingRoutes.get('/:booking_id', bookingControllers.getBookingById)
 bookingRoutes.delete('/:booking_id', bookingControllers.cancelBooking)
-
-// Payment-related routes
-bookingRoutes.post('/:booking_id/confirm-payment', bookingControllers.confirmBookingPayment)
 bookingRoutes.put('/:booking_id/extend', bookingControllers.extendBooking)
+bookingRoutes.post('/:booking_id/confirm-payment', bookingControllers.confirmBookingPayment)
 
 // ========== ADMIN ROUTES (with adminRoleAuth) ==========
 bookingRoutes.get('', adminRoleAuth, bookingControllers.getAllBookings)
@@ -24,10 +23,7 @@ bookingRoutes.post('/:booking_id/refund', adminRoleAuth, bookingControllers.refu
 bookingRoutes.patch('/:booking_id/verify-license', adminRoleAuth, bookingControllers.verifyDriverLicense)
 bookingRoutes.get('/export', adminRoleAuth, bookingControllers.exportBookings)
 
-// These were missing adminRoleAuth!
-bookingRoutes.get('/stats',  bookingControllers.getBookingStats)
-bookingRoutes.get('/:booking_id/license/front',  bookingControllers.downloadDriverLicenseFront)
-bookingRoutes.get('/:booking_id/license/back',  bookingControllers.downloadDriverLicenseBack)
+bookingRoutes.get('/:booking_id/license/front', adminRoleAuth, bookingControllers.downloadDriverLicenseFront)
+bookingRoutes.get('/:booking_id/license/back', adminRoleAuth, bookingControllers.downloadDriverLicenseBack)
 
 export default bookingRoutes
-

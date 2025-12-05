@@ -174,56 +174,155 @@ export const createBookingService = async (
 // Get user's bookings
 export const getUserBookingsService = async (user_id: number): Promise<BookingWithDetails[]> => {
     const db = getDbPool();
+    
     const query = `
-        SELECT 
-            b.*,
+        SELECT DISTINCT
+            b.booking_id,
+            b.user_id,
+            b.vehicle_id,
+            b.pickup_location,
+            b.return_location,
+            b.pickup_date,
+            b.return_date,
+            b.booking_date,
+            b.total_amount,
+            b.driver_license_number,
+            b.driver_license_expiry,
+            b.driver_license_front_url,
+            b.driver_license_back_url,
+            b.insurance_type,
+            b.additional_protection,
+            b.roadside_assistance,
+            b.booking_status,
+            b.verified_by_admin,
+            b.verified_at,
+            b.admin_notes,
+            b.created_at,
+            b.updated_at,
+            
             u.first_name + ' ' + u.last_name as user_name,
             u.email as user_email,
             vs.manufacturer as vehicle_manufacturer,
             vs.model as vehicle_model,
             v.rental_rate,
-            p.payment_status,
-            p.payment_method,
-            p.transaction_id
+            
+            p_latest.payment_status,
+            p_latest.payment_method,
+            p_latest.transaction_id
+            
         FROM Bookings b
-        JOIN Users u ON b.user_id = u.user_id
-        JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
-        JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-        LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
+        INNER JOIN Users u ON b.user_id = u.user_id
+        INNER JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+        INNER JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+        LEFT JOIN (
+            SELECT 
+                p1.booking_id,
+                p1.payment_status,
+                p1.payment_method,
+                p1.transaction_id,
+                ROW_NUMBER() OVER (PARTITION BY p1.booking_id ORDER BY p1.created_at DESC) as rn
+            FROM PaymentsTable p1
+        ) p_latest ON b.booking_id = p_latest.booking_id AND p_latest.rn = 1
+        
         WHERE b.user_id = @user_id
         ORDER BY b.created_at DESC
     `;
+    
+    console.log(`📋 Executing getUserBookingsService for user ${user_id}`);
+    
     const result = await db.request()
         .input('user_id', user_id)
         .query(query);
-    return result.recordset;
+    
+    const bookings = result.recordset;
+    
+    // Debug: Check for duplicates
+    const bookingIds = bookings.map(b => b.booking_id);
+    const uniqueIds = [...new Set(bookingIds)];
+    
+    console.log(`📊 getUserBookingsService Results for user ${user_id}:`);
+    console.log(`📊 Total records: ${bookings.length}`);
+    console.log(`📊 Unique booking IDs: ${uniqueIds.length}`);
+    
+    if (bookings.length !== uniqueIds.length) {
+        console.warn(`⚠️ Found duplicates for user ${user_id}!`);
+    }
+    
+    return bookings;
 }
 
 // Get all bookings with filters (admin only)
 export const getAllBookingsService = async (filters?: BookingFilters): Promise<BookingWithDetails[]> => {
     const db = getDbPool();
     
+    // Start building the query with DISTINCT and explicit column selection
     let query = `
-        SELECT 
-            b.*,
+        SELECT DISTINCT
+            -- Booking columns (explicitly list all to avoid ambiguity)
+            b.booking_id,
+            b.user_id,
+            b.vehicle_id,
+            b.pickup_location,
+            b.return_location,
+            b.pickup_date,
+            b.return_date,
+            b.booking_date,
+            b.total_amount,
+            b.driver_license_number,
+            b.driver_license_expiry,
+            b.driver_license_front_url,
+            b.driver_license_back_url,
+            b.insurance_type,
+            b.additional_protection,
+            b.roadside_assistance,
+            b.booking_status,
+            b.verified_by_admin,
+            b.verified_at,
+            b.admin_notes,
+            b.created_at,
+            b.updated_at,
+            
+            -- User information
             u.first_name + ' ' + u.last_name as user_name,
             u.email as user_email,
+            
+            -- Vehicle information
             vs.manufacturer as vehicle_manufacturer,
             vs.model as vehicle_model,
             v.rental_rate,
+            
+            -- Latest payment information (using subquery to avoid duplicates)
             p_latest.payment_status,
             p_latest.payment_method,
-            p_latest.transaction_id
+            p_latest.transaction_id,
+            p_latest.created_at as payment_created_at
+            
         FROM Bookings b
-        JOIN Users u ON b.user_id = u.user_id
-        JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
-        JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+        
+        -- User info (1:1 relationship, but use LEFT JOIN for safety)
+        INNER JOIN Users u ON b.user_id = u.user_id
+        
+        -- Vehicle info (1:1 relationship, but use LEFT JOIN for safety)
+        INNER JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+        
+        -- Vehicle specifications (1:1 relationship, but use LEFT JOIN for safety)
+        INNER JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+        
+        -- Get only the latest payment per booking to avoid duplicates
         LEFT JOIN (
             SELECT 
-                p1.*,
-                ROW_NUMBER() OVER (PARTITION BY p1.booking_id ORDER BY p1.created_at DESC) as rn
+                p1.booking_id,
+                p1.payment_status,
+                p1.payment_method,
+                p1.transaction_id,
+                p1.created_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY p1.booking_id 
+                    ORDER BY p1.created_at DESC
+                ) as payment_rank
             FROM PaymentsTable p1
-        ) p_latest ON b.booking_id = p_latest.booking_id AND p_latest.rn = 1
+        ) p_latest ON b.booking_id = p_latest.booking_id AND p_latest.payment_rank = 1
+        
         WHERE 1=1
     `;
     
@@ -237,8 +336,13 @@ export const getAllBookingsService = async (filters?: BookingFilters): Promise<B
         }
         
         if (filters.payment_status) {
-            query += ' AND p_latest.payment_status = @payment_status';
-            request.input('payment_status', filters.payment_status);
+            // Handle NULL payment_status for bookings without payments
+            if (filters.payment_status === 'No Payment') {
+                query += ' AND (p_latest.payment_status IS NULL OR p_latest.payment_status = \'\')';
+            } else {
+                query += ' AND p_latest.payment_status = @payment_status';
+                request.input('payment_status', filters.payment_status);
+            }
         }
         
         if (filters.date_from) {
@@ -253,10 +357,19 @@ export const getAllBookingsService = async (filters?: BookingFilters): Promise<B
         
         if (filters.search) {
             query += ` AND (
-                u.first_name + ' ' + u.last_name LIKE @search OR
+                -- Search user name
+                CONCAT(u.first_name, ' ', u.last_name) LIKE @search OR
+                -- Search email
                 u.email LIKE @search OR
-                vs.manufacturer + ' ' + vs.model LIKE @search OR
-                b.booking_id LIKE @search
+                -- Search vehicle make and model
+                CONCAT(vs.manufacturer, ' ', vs.model) LIKE @search OR
+                -- Search booking ID
+                CAST(b.booking_id AS NVARCHAR(20)) LIKE @search OR
+                -- Search license number
+                b.driver_license_number LIKE @search OR
+                -- Search location
+                b.pickup_location LIKE @search OR
+                b.return_location LIKE @search
             )`;
             request.input('search', `%${filters.search}%`);
         }
@@ -273,9 +386,99 @@ export const getAllBookingsService = async (filters?: BookingFilters): Promise<B
     }
 
     query += ' ORDER BY b.created_at DESC';
-
-    const result = await request.query(query);
-    return result.recordset;
+    
+    console.log('📋 Executing getAllBookingsService query with filters:', filters);
+    
+    try {
+        const result = await request.query(query);
+        const bookings = result.recordset;
+        
+        // Debug: Check for duplicates
+        const bookingIds = bookings.map(b => b.booking_id);
+        const uniqueIds = [...new Set(bookingIds)];
+        
+        console.log(`📊 getAllBookingsService Results:`);
+        console.log(`📊 Total records returned: ${bookings.length}`);
+        console.log(`📊 Unique booking IDs: ${uniqueIds.length}`);
+        
+        if (bookings.length !== uniqueIds.length) {
+            const duplicateCount = bookings.length - uniqueIds.length;
+            console.warn(`⚠️ DUPLICATES FOUND! ${duplicateCount} duplicate records`);
+            
+            // Find which IDs are duplicated
+            const duplicates = bookingIds.filter((id, index) => bookingIds.indexOf(id) !== index);
+            const uniqueDuplicates = [...new Set(duplicates)];
+            
+            console.warn(`⚠️ Duplicate booking IDs:`, uniqueDuplicates);
+            
+            // Log sample duplicate details for debugging
+            if (uniqueDuplicates.length > 0) {
+                const sampleId = uniqueDuplicates[0];
+                const duplicateRecords = bookings.filter(b => b.booking_id === sampleId);
+                console.warn(`⚠️ Sample duplicate for booking ID ${sampleId}:`);
+                console.warn(`⚠️ Number of duplicate rows: ${duplicateRecords.length}`);
+                
+                // Compare first two duplicates to see what's different
+                if (duplicateRecords.length >= 2) {
+                    const record1 = duplicateRecords[0];
+                    const record2 = duplicateRecords[1];
+                    
+                    console.warn('⚠️ First record:', {
+                        payment_status: record1.payment_status,
+                        transaction_id: record1.transaction_id,
+                        payment_created_at: record1.payment_created_at
+                    });
+                    
+                    console.warn('⚠️ Second record:', {
+                        payment_status: record2.payment_status,
+                        transaction_id: record2.transaction_id,
+                        payment_created_at: record2.payment_created_at
+                    });
+                    
+                    // Find differences between records
+                    const differences = [];
+                    for (const key in record1) {
+                        if (record1[key] !== record2[key]) {
+                            differences.push({
+                                field: key,
+                                value1: record1[key],
+                                value2: record2[key]
+                            });
+                        }
+                    }
+                    
+                    if (differences.length > 0) {
+                        console.warn('⚠️ Differences between duplicate records:', differences);
+                    }
+                }
+            }
+        }
+        
+        // If there are still duplicates, remove them (safety net)
+        if (bookings.length !== uniqueIds.length) {
+            console.log('🛡️ Removing duplicates as safety measure...');
+            const uniqueBookings: BookingWithDetails[] = [];
+            const seenIds = new Set();
+            
+            for (const booking of bookings) {
+                if (!seenIds.has(booking.booking_id)) {
+                    seenIds.add(booking.booking_id);
+                    uniqueBookings.push(booking);
+                }
+            }
+            
+            console.log(`🛡️ Reduced from ${bookings.length} to ${uniqueBookings.length} unique bookings`);
+            return uniqueBookings;
+        }
+        
+        console.log('✅ getAllBookingsService completed successfully');
+        return bookings;
+        
+    } catch (error: any) {
+        console.error('❌ Error in getAllBookingsService:', error.message);
+        console.error('❌ SQL Query:', query);
+        throw error;
+    }
 }
 
 // Get booking by ID
