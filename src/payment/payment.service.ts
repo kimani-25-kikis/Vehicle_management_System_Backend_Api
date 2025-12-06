@@ -26,6 +26,160 @@ interface PaymentWithDetails extends PaymentResponse {
   vehicle_model: string;
 }
 
+// Get payment by booking ID with detailed info
+export const getPaymentByBookingIdService = async (booking_id: number): Promise<any> => {
+  const db = getDbPool();
+  
+  try {
+    const query = `
+      SELECT 
+        p.*,
+        b.booking_status,
+        b.verified_by_admin,
+        b.driver_license_front_url,
+        b.driver_license_back_url,
+        b.driver_license_number,
+        b.total_amount as booking_total,
+        u.first_name + ' ' + u.last_name as user_name,
+        u.email as user_email,
+        vs.model as vehicle_model,
+        vs.manufacturer as vehicle_manufacturer
+      FROM PaymentsTable p
+      JOIN Bookings b ON p.booking_id = b.booking_id
+      JOIN Users u ON b.user_id = u.user_id
+      JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+      JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+      WHERE p.booking_id = @booking_id
+    `;
+    
+    const result = await db.request()
+      .input('booking_id', booking_id)
+      .query(query);
+
+    return result.recordset[0] || null;
+  } catch (error: any) {
+    console.error('Error in getPaymentByBookingIdService:', error);
+    throw new Error("Failed to fetch payment details: " + error.message);
+  }
+}
+
+// Get booking payment details for workflow
+export const getBookingPaymentDetailsService = async (booking_id: number): Promise<any> => {
+  const db = getDbPool();
+  
+  try {
+    const paymentQuery = `
+      SELECT 
+        p.payment_id,
+        p.booking_id,
+        p.amount,
+        p.payment_status,
+        p.payment_method,
+        p.transaction_id,
+        p.created_at as payment_created,
+        p.updated_at as payment_updated
+      FROM PaymentsTable p
+      WHERE p.booking_id = @booking_id
+    `;
+    
+    const bookingQuery = `
+      SELECT 
+        b.booking_id,
+        b.booking_status,
+        b.verified_by_admin,
+        b.driver_license_front_url,
+        b.driver_license_back_url,
+        b.driver_license_number,
+        b.driver_license_expiry,
+        b.total_amount,
+        b.pickup_date,
+        b.return_date,
+        b.pickup_location,
+        b.return_location,
+        b.admin_notes,
+        u.user_id,
+        u.first_name + ' ' + u.last_name as user_name,
+        u.email as user_email
+      FROM Bookings b
+      JOIN Users u ON b.user_id = u.user_id
+      WHERE b.booking_id = @booking_id
+    `;
+    
+    const [paymentResult, bookingResult] = await Promise.all([
+      db.request().input('booking_id', booking_id).query(paymentQuery),
+      db.request().input('booking_id', booking_id).query(bookingQuery)
+    ]);
+
+    return {
+      payment: paymentResult.recordset[0] || null,
+      booking: bookingResult.recordset[0] || null
+    };
+  } catch (error: any) {
+    console.error('Error in getBookingPaymentDetailsService:', error);
+    throw new Error("Failed to fetch booking payment details: " + error.message);
+  }
+}
+
+// Verify payment service
+export const verifyPaymentService = async (
+  payment_id: number,
+  verified: boolean,
+  admin_notes: string,
+  admin_id: number
+): Promise<PaymentResponse | string> => {
+  const db = getDbPool();
+  
+  try {
+    const updateQuery = `
+      UPDATE PaymentsTable 
+      SET payment_status = @payment_status,
+          updated_at = GETDATE()
+      OUTPUT INSERTED.*
+      WHERE payment_id = @payment_id
+    `;
+    
+    const result = await db.request()
+      .input('payment_id', payment_id)
+      .input('payment_status', verified ? 'Completed' : 'Pending')
+      .query(updateQuery);
+
+    if (result.recordset.length === 0) {
+      return "Payment not found";
+    }
+
+    // Update booking admin notes if provided
+    if (admin_notes) {
+      const bookingQuery = `
+        SELECT booking_id FROM PaymentsTable WHERE payment_id = @payment_id
+      `;
+      const bookingResult = await db.request()
+        .input('payment_id', payment_id)
+        .query(bookingQuery);
+
+      if (bookingResult.recordset.length > 0) {
+        const booking_id = bookingResult.recordset[0].booking_id;
+        
+        const updateBookingQuery = `
+          UPDATE Bookings 
+          SET admin_notes = CONCAT(COALESCE(admin_notes + ' | ', ''), @admin_notes),
+              updated_at = GETDATE()
+          WHERE booking_id = @booking_id
+        `;
+        
+        await db.request()
+          .input('booking_id', booking_id)
+          .input('admin_notes', `${new Date().toISOString()} - Admin #${admin_id}: ${admin_notes}`)
+          .query(updateBookingQuery);
+      }
+    }
+
+    return result.recordset[0];
+  } catch (error: any) {
+    console.error('Error in verifyPaymentService:', error);
+    return "Failed to verify payment: " + error.message;
+  }
+}
+
 // Create Stripe payment intent
 export const createPaymentService = async (   booking_id: number,   user_id: number,
   total_amount: number,  id:string //   payment_method:string,
@@ -130,27 +284,27 @@ export const confirmPaymentService = async (
 }
 
 // Get payment by booking ID
-export const getPaymentByBookingIdService = async (booking_id: number): Promise<PaymentWithDetails | null> => {
-  const db = getDbPool();
-  const query = `
-    SELECT 
-      p.*,
-      u.first_name + ' ' + u.last_name as user_name,
-      u.email as user_email,
-      b.booking_status,
-      vs.model as vehicle_model
-    FROM Payments p
-    JOIN Bookings b ON p.booking_id = b.booking_id
-    JOIN Users u ON b.user_id = u.user_id
-    JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
-    JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-    WHERE p.booking_id = @booking_id
-  `;
-  const result = await db.request()
-    .input('booking_id', booking_id)
-    .query(query);
-  return result.recordset[0] || null;
-}
+// export const getPaymentByBookingIdService = async (booking_id: number): Promise<PaymentWithDetails | null> => {
+//   const db = getDbPool();
+//   const query = `
+//     SELECT 
+//       p.*,
+//       u.first_name + ' ' + u.last_name as user_name,
+//       u.email as user_email,
+//       b.booking_status,
+//       vs.model as vehicle_model
+//     FROM Payments p
+//     JOIN Bookings b ON p.booking_id = b.booking_id
+//     JOIN Users u ON b.user_id = u.user_id
+//     JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+//     JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+//     WHERE p.booking_id = @booking_id
+//   `;
+//   const result = await db.request()
+//     .input('booking_id', booking_id)
+//     .query(query);
+//   return result.recordset[0] || null;
+// }
 
 // Get all payments (admin only)
 export const getAllPaymentsService = async (): Promise<PaymentWithDetails[]> => {

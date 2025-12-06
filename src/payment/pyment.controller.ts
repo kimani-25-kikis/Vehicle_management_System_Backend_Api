@@ -2,6 +2,7 @@ import { type Context } from "hono"
 import * as paymentServices from "./payment.service.ts";
 import Stripe from "stripe";
 import dotenv from "dotenv"
+import { getDbPool } from "../db/db.config.ts";
 
 
 dotenv.config();
@@ -99,19 +100,22 @@ export const confirmPayment = async (c: Context) => {
   }
 }
 
-// Get payment by booking ID
+// Get payment by booking ID (with booking details)
 export const getPaymentByBookingId = async (c: Context) => {
-  const booking_id = parseInt(c.req.param('booking_id'))
   try {
-    const customer = c.customer; // ✅ CHANGED: c.customer instead of c.get('customer')
+    const customer = c.customer;
+    const booking_id = parseInt(c.req.param('booking_id'));
     
-    // ✅ ADD VALIDATION: Check if customer exists
     if (!customer) {
       return c.json({ error: 'Authentication required' }, 401);
     }
 
+    if (!booking_id) {
+      return c.json({ error: 'Booking ID is required' }, 400);
+    }
+
     const result = await paymentServices.getPaymentByBookingIdService(booking_id);
-    if (result === null) {
+    if (!result) {
       return c.json({ error: 'Payment not found' }, 404);
     }
 
@@ -121,12 +125,95 @@ export const getPaymentByBookingId = async (c: Context) => {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    return c.json({ success: true, data: result });
+    return c.json({ 
+      success: true, 
+      data: result 
+    });
   } catch (error: any) {
     console.error('Error fetching payment:', error);
     return c.json({ error: 'Failed to fetch payment' }, 500);
   }
 }
+
+// Get detailed payment info with booking status (for workflow)
+export const getBookingPaymentDetails = async (c: Context) => {
+  try {
+    const customer = c.customer;
+    const booking_id = parseInt(c.req.param('booking_id'));
+    
+    if (!customer) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (customer.user_type !== 'admin') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    if (!booking_id) {
+      return c.json({ error: 'Booking ID is required' }, 400);
+    }
+
+    const result = await paymentServices.getBookingPaymentDetailsService(booking_id);
+    if (!result) {
+      return c.json({ error: 'Booking payment details not found' }, 404);
+    }
+
+    return c.json({ 
+      success: true, 
+      data: result 
+    });
+  } catch (error: any) {
+    console.error('Error fetching booking payment details:', error);
+    return c.json({ error: 'Failed to fetch booking payment details' }, 500);
+  }
+}
+
+// Verify payment manually (admin only)
+export const verifyPayment = async (c: Context) => {
+  try {
+    const customer = c.customer;
+    const payment_id = parseInt(c.req.param('payment_id'));
+    const body = await c.req.json();
+    
+    if (!customer) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    if (customer.user_type !== 'admin') {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    if (!payment_id) {
+      return c.json({ error: 'Payment ID is required' }, 400);
+    }
+
+    if (typeof body.verified !== 'boolean') {
+      return c.json({ error: 'Verification status is required' }, 400);
+    }
+
+    const result = await paymentServices.verifyPaymentService(
+      payment_id,
+      body.verified,
+      body.admin_notes || '',
+      customer.user_id
+    );
+
+    if (typeof result === "string") {
+      return c.json({ error: result }, 400);
+    }
+
+    return c.json({ 
+      success: true,
+      message: body.verified ? 'Payment verified successfully' : 'Payment unverified',
+      data: result 
+    }, 200);
+  } catch (error: any) {
+    console.error('Error verifying payment:', error.message);
+    return c.json({ error: error.message }, 500);
+  }
+}
+
+
 
 // Get all payments (admin only)
 export const getAllPayments = async (c: Context) => {
@@ -151,6 +238,104 @@ export const getAllPayments = async (c: Context) => {
   } catch (error: any) {
     console.error('Error fetching all payments:', error.message);
     return c.json({ error: 'Failed to fetch payments' }, 500);
+  }
+}
+
+export const getMyPayments = async (c: Context) => {
+  try {
+    const customer = c.customer;
+    
+    if (!customer) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const db = getDbPool();
+    const query = `
+      SELECT 
+        p.*,
+        b.booking_status,
+        b.pickup_date,
+        b.return_date,
+        b.total_amount as booking_total,
+        vs.manufacturer,
+        vs.model,
+        vs.year
+      FROM PaymentsTable p
+      JOIN Bookings b ON p.booking_id = b.booking_id
+      JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+      JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+      WHERE p.user_id = @user_id
+      ORDER BY p.created_at DESC
+    `;
+    
+    const result = await db.request()
+      .input('user_id', customer.user_id)
+      .query(query);
+
+    return c.json({ 
+      success: true,
+      data: result.recordset 
+    });
+  } catch (error: any) {
+    console.error('Error fetching user payments:', error);
+    return c.json({ error: 'Failed to fetch payments' }, 500);
+  }
+}
+
+export const getMySpendingStats = async (c: Context) => {
+  try {
+    const customer = c.customer;
+    
+    if (!customer) {
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const db = getDbPool();
+    const query = `
+      SELECT 
+        -- Total spent
+        SUM(CASE WHEN payment_status = 'Completed' THEN amount ELSE 0 END) as total_spent,
+        
+        -- Monthly spending
+        FORMAT(created_at, 'yyyy-MM') as month,
+        SUM(CASE WHEN payment_status = 'Completed' AND FORMAT(created_at, 'yyyy-MM') = FORMAT(GETDATE(), 'yyyy-MM') THEN amount ELSE 0 END) as this_month_spent,
+        
+        -- Payment methods
+        COUNT(CASE WHEN payment_method = 'stripe' THEN 1 END) as stripe_payments,
+        COUNT(CASE WHEN payment_method = 'mpesa' THEN 1 END) as mpesa_payments,
+        
+        -- Status breakdown
+        COUNT(CASE WHEN payment_status = 'Completed' THEN 1 END) as completed_payments,
+        COUNT(CASE WHEN payment_status = 'Pending' THEN 1 END) as pending_payments,
+        COUNT(CASE WHEN payment_status = 'Failed' THEN 1 END) as failed_payments,
+        
+        -- Recent payments count
+        COUNT(*) as total_payments
+      FROM PaymentsTable
+      WHERE user_id = @user_id
+      GROUP BY FORMAT(created_at, 'yyyy-MM')
+    `;
+    
+    const result = await db.request()
+      .input('user_id', customer.user_id)
+      .query(query);
+
+    return c.json({ 
+      success: true,
+      stats: result.recordset[0] || {
+        total_spent: 0,
+        this_month_spent: 0,
+        stripe_payments: 0,
+        mpesa_payments: 0,
+        completed_payments: 0,
+        pending_payments: 0,
+        failed_payments: 0,
+        total_payments: 0
+      }
+    });
+  } catch (error: any) {
+    console.error('Error fetching spending stats:', error);
+    return c.json({ error: 'Failed to fetch spending stats' }, 500);
   }
 }
 

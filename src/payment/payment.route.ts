@@ -4,20 +4,20 @@ import { bothRolesAuth, adminRoleAuth } from '../middleware/bearAuth.ts'
 
 const paymentRoutes = new Hono()
 
-// Apply auth middleware to protected routes
-// paymentRoutes.use('*', bothRolesAuth)
+// ADD THIS LINE - Apply auth to all payment routes
+paymentRoutes.use('*', bothRolesAuth)
 
-// Customer routes
+// Now all these routes will be protected
 paymentRoutes.post('/payments/create-intent', paymentControllers.checkoutBooking)
 paymentRoutes.post('/payments/confirm', paymentControllers.confirmPayment)
-paymentRoutes.get('/booking/:booking_id', paymentControllers.getPaymentByBookingId)
-
-// Admin only routes
+paymentRoutes.get('/payments/booking/:booking_id', paymentControllers.getPaymentByBookingId)
 paymentRoutes.get('/payments', adminRoleAuth, paymentControllers.getAllPayments)
 paymentRoutes.post('/payments/refund', paymentControllers.refundPayment)
+paymentRoutes.get('/payments/stats', adminRoleAuth, paymentControllers.getPaymentStats)
+paymentRoutes.get('/payments/export', adminRoleAuth, paymentControllers.exportPayments)
 
-paymentRoutes.get('/payments/stats', adminRoleAuth, paymentControllers.getPaymentStats) // ADD THIS
-paymentRoutes.get('/payments/export', adminRoleAuth, paymentControllers.exportPayments) // ADD THIS
+paymentRoutes.get('/payments/my-payments', paymentControllers.getMyPayments)
+paymentRoutes.get('/payments/my-spending-stats', paymentControllers.getMySpendingStats)
 
 // Webhook route (no auth required for webhooks)
 paymentRoutes.post('/payments/webhook', paymentControllers.processPaymentWebhook)
