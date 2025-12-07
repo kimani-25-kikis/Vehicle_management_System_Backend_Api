@@ -143,3 +143,30 @@ export const deleteUserService = async (user_id:number): Promise<string> => {
             .query(query);
         return result.rowsAffected[0] === 1 ? "User deleted successfully 🎊" : "Failed to delete user";
 }
+
+// Add this function to users.service.ts
+export const updateUserRoleService = async (
+    user_id: number, 
+    user_type: string
+): Promise<UserResponse | null> => {
+    const db = getDbPool();
+    
+    const query = `
+        UPDATE Users 
+        SET user_type = @user_type, updated_at = GETDATE() 
+        OUTPUT INSERTED.* 
+        WHERE user_id = @user_id
+    `;
+    
+    try {
+        const result = await db.request()
+            .input('user_id', user_id)
+            .input('user_type', user_type)
+            .query(query);
+            
+        return result.recordset[0] || null;
+    } catch (error) {
+        console.error('Error in updateUserRoleService:', error);
+        throw error;
+    }
+}

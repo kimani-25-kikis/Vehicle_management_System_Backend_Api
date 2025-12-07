@@ -265,3 +265,43 @@ export const changePassword = async (c: Context) => {
     }, 500);
   }
 }
+
+// Add this function to users.controller.ts
+export const updateUserRole = async (c: Context) => {
+    try {
+        const user_id = parseInt(c.req.param('user_id'))
+        const body = await c.req.json()
+
+        // Validate required field
+        if (!body.user_type) {
+            return c.json({ error: 'user_type is required' }, 400);
+        }
+
+        // Validate user_type value
+        if (!['user', 'admin'].includes(body.user_type)) {
+            return c.json({ error: 'user_type must be either "user" or "admin"' }, 400);
+        }
+
+        // Check if user exists
+        const checkExists = await userServices.getUserByIdService(user_id);
+        if (checkExists === null) {
+            return c.json({ error: 'User not found' }, 404);
+        }
+
+        // Update only the user_type
+        const result = await userServices.updateUserRoleService(user_id, body.user_type);
+        
+        if (result === null) {
+            return c.json({ error: 'Failed to update user role' }, 500);
+        }
+
+        return c.json({ 
+            message: 'User role updated successfully', 
+            updated_user: result 
+        }, 200);
+
+    } catch (error) {
+        console.error('Error updating user role:', error);
+        return c.json({ error: 'Failed to update user role' }, 500);
+    }
+}

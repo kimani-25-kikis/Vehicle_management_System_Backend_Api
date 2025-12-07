@@ -14,12 +14,6 @@ userRoutes.get('/users/:user_id', userControllers.getUserById)
 userRoutes.put('/users/:user_id', userControllers.updateUser)
 
 userRoutes.delete('/users/:user_id', userControllers.deleteUser)
-
-userRoutes.get('/test-auth', customerRoleAuth, (c) => {
-  return c.json({ 
-    message: 'Authenticated',
-    user: c.customer 
-  });
-});
+userRoutes.patch('/user-status/:user_id', userControllers.updateUserRole)
 
 export default userRoutes

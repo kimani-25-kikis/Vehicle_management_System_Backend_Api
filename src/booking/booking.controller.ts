@@ -446,6 +446,7 @@ export const exportBookings = async (c: Context) => {
     }
 }
 
+// Download driver license FRONT (admin only) - Node.js version
 export const downloadDriverLicenseFront = async (c: Context) => {
     try {
         const booking_id = parseInt(c.req.param('booking_id'))
@@ -455,13 +456,63 @@ export const downloadDriverLicenseFront = async (c: Context) => {
             return c.json({ error: 'Unauthorized' }, 403);
         }
         
+        console.log(`🔍 Download request for booking ${booking_id} - front license`);
+        
         const result = await bookingServices.downloadDriverLicenseService(booking_id, 'front');
         
+        console.log(`📋 Service result for front license:`, result);
+        
         if (typeof result === "string") {
+            console.error(`❌ Error: ${result}`);
             return c.json({ error: result }, 400);
         }
         
-        // Return download info
+        // Check what type of URL we have
+        console.log(`🔗 License URL: ${result.url}`);
+        
+        // If it's an HTTP/HTTPS URL (cloud storage)
+        if (result.url && result.url.startsWith('http')) {
+            console.log(`🌐 External URL detected`);
+            
+            try {
+                // Fetch the image from external URL
+                const imageResponse = await fetch(result.url);
+                
+                if (!imageResponse.ok) {
+                    console.error(`❌ Failed to fetch image: ${imageResponse.status}`);
+                    // Fallback: return the URL
+                    return c.json({
+                        success: true,
+                        download_url: result.url,
+                        filename: result.filename,
+                        message: 'Failed to stream image, use URL directly'
+                    }, 200);
+                }
+                
+                // Get image data
+                const imageBuffer = await imageResponse.arrayBuffer();
+                console.log(`✅ Image fetched successfully (${imageBuffer.byteLength} bytes)`);
+                
+                // Set headers for download
+                c.header('Content-Type', 'image/jpeg');
+                c.header('Content-Disposition', `attachment; filename="${result.filename}"`);
+                c.header('Cache-Control', 'no-cache');
+                
+                return c.body(new Uint8Array(imageBuffer));
+                
+            } catch (fetchError) {
+                console.error(`❌ Error fetching image:`, fetchError);
+                // Fallback: return the URL
+                return c.json({
+                    success: true,
+                    download_url: result.url,
+                    filename: result.filename,
+                    message: 'Cannot stream image directly, use URL below'
+                }, 200);
+            }
+        }
+        
+        // If no valid URL or we can't handle it, return JSON with URL
         return c.json({
             success: true,
             download_url: result.url,
@@ -469,12 +520,12 @@ export const downloadDriverLicenseFront = async (c: Context) => {
         }, 200);
         
     } catch (error: any) {
-        console.error('Error downloading driver license front:', error.message);
+        console.error('❌ Error downloading driver license front:', error.message);
         return c.json({ error: 'Failed to download driver license' }, 500);
     }
 }
 
-// ADD THIS CONTROLLER: Download driver license back
+// Download driver license BACK (admin only) - Node.js version
 export const downloadDriverLicenseBack = async (c: Context) => {
     try {
         const booking_id = parseInt(c.req.param('booking_id'))
@@ -484,12 +535,63 @@ export const downloadDriverLicenseBack = async (c: Context) => {
             return c.json({ error: 'Unauthorized' }, 403);
         }
         
+        console.log(`🔍 Download request for booking ${booking_id} - back license`);
+        
         const result = await bookingServices.downloadDriverLicenseService(booking_id, 'back');
         
+        console.log(`📋 Service result for back license:`, result);
+        
         if (typeof result === "string") {
+            console.error(`❌ Error: ${result}`);
             return c.json({ error: result }, 400);
         }
         
+        // Check what type of URL we have
+        console.log(`🔗 License URL: ${result.url}`);
+        
+        // If it's an HTTP/HTTPS URL (cloud storage)
+        if (result.url && result.url.startsWith('http')) {
+            console.log(`🌐 External URL detected`);
+            
+            try {
+                // Fetch the image from external URL
+                const imageResponse = await fetch(result.url);
+                
+                if (!imageResponse.ok) {
+                    console.error(`❌ Failed to fetch image: ${imageResponse.status}`);
+                    // Fallback: return the URL
+                    return c.json({
+                        success: true,
+                        download_url: result.url,
+                        filename: result.filename,
+                        message: 'Failed to stream image, use URL directly'
+                    }, 200);
+                }
+                
+                // Get image data
+                const imageBuffer = await imageResponse.arrayBuffer();
+                console.log(`✅ Image fetched successfully (${imageBuffer.byteLength} bytes)`);
+                
+                // Set headers for download
+                c.header('Content-Type', 'image/jpeg');
+                c.header('Content-Disposition', `attachment; filename="${result.filename}"`);
+                c.header('Cache-Control', 'no-cache');
+                
+                return c.body(new Uint8Array(imageBuffer));
+                
+            } catch (fetchError) {
+                console.error(`❌ Error fetching image:`, fetchError);
+                // Fallback: return the URL
+                return c.json({
+                    success: true,
+                    download_url: result.url,
+                    filename: result.filename,
+                    message: 'Cannot stream image directly, use URL below'
+                }, 200);
+            }
+        }
+        
+        // If no valid URL or we can't handle it, return JSON with URL
         return c.json({
             success: true,
             download_url: result.url,
@@ -497,7 +599,7 @@ export const downloadDriverLicenseBack = async (c: Context) => {
         }, 200);
         
     } catch (error: any) {
-        console.error('Error downloading driver license back:', error.message);
+        console.error('❌ Error downloading driver license back:', error.message);
         return c.json({ error: 'Failed to download driver license' }, 500);
     }
 }
