@@ -1,52 +1,37 @@
 import { type Context } from "hono";
 import * as supportServices from "./support.service.ts";
+import { EmailService } from '../email/email.service.ts';
 
 // Create a new support ticket
+
+
 export const createTicket = async (c: Context) => {
     try {
         const body = await c.req.json();
         const user_id = c.customer?.user_id;
+        const user_name = c.customer?.first_name + ' ' + c.customer?.last_name;
+        const user_email = c.customer?.email;
+
+        console.log("🔵 Creating ticket for user:", user_id, user_email);
 
         if (!user_id) {
             return c.json({ error: 'User authentication required' }, 401);
         }
 
-        // Validation
-        if (!body.subject || !body.description || !body.type) {
-            return c.json({ error: 'Missing required fields: subject, description, type' }, 400);
+        // Validation...
+        if (!body.subject || !body.description) {
+            return c.json({ error: 'Missing subject or description' }, 400);
         }
 
-        // Validate ticket type
-        const validTypes = ['damage_report', 'general_inquiry', 'technical_issue', 'billing', 'complaint', 'feedback'];
-        if (!validTypes.includes(body.type)) {
-            return c.json({ 
-                error: `Invalid ticket type. Must be one of: ${validTypes.join(', ')}` 
-            }, 400);
-        }
-
-        // Validate priority
-        const validPriorities = ['urgent', 'high', 'medium', 'low'];
-        const priority = validPriorities.includes(body.priority) ? body.priority : 'medium';
-
-        // For damage reports, booking_id is required
-        if (body.type === 'damage_report' && !body.booking_id) {
-            return c.json({ error: 'Booking ID is required for damage reports' }, 400);
-        }
-
-        // For damage reports, validate that booking belongs to user
-        if (body.type === 'damage_report' && body.booking_id) {
-            const isValidBooking = await supportServices.validateUserBookingService(user_id, body.booking_id);
-            if (!isValidBooking) {
-                return c.json({ error: 'Invalid booking or booking does not belong to you' }, 400);
-            }
-        }
-
+        const ticketType = body.type || 'general_inquiry';
+        
+        // Call service
         const result = await supportServices.createTicketService({
             user_id,
             subject: body.subject,
             description: body.description,
-            type: body.type,
-            priority,
+            type: ticketType,
+            priority: body.priority || 'medium',
             booking_id: body.booking_id || null
         });
 
@@ -54,6 +39,53 @@ export const createTicket = async (c: Context) => {
             return c.json({ error: 'Failed to create ticket' }, 500);
         }
         
+        console.log("✅ Ticket created with ID:", result.ticket_id);
+
+        // 🔥 Send email notification (async - don't await to avoid slowing response)
+        if (user_email) {
+            EmailService.sendTicketConfirmationEmail({
+                customerName: user_name || 'Customer',
+                customerEmail: user_email,
+                ticketId: result.ticket_id,
+                subject: result.subject,
+                description: result.description,
+                type: result.type,
+                priority: result.priority,
+                status: result.status,
+                bookingId: result.booking_id || undefined,
+                createdAt: result.created_at.toISOString()
+            }).then(emailSuccess => {
+                if (emailSuccess) {
+                    console.log(`✅ Email sent to ${user_email} for ticket #${result.ticket_id}`);
+                } else {
+                    console.log(`⚠️ Failed to send email to ${user_email}`);
+                }
+            }).catch(emailError => {
+                console.error(`❌ Email error:`, emailError);
+            });
+        } else {
+            console.log("⚠️ No email found for user, skipping email notification");
+        }
+
+        // Send admin notification for damage reports or urgent tickets
+if (result.type === 'damage_report' || result.priority === 'urgent' || result.priority === 'high') {
+    EmailService.sendAdminTicketNotification({
+        ticketId: result.ticket_id,
+        subject: result.subject,
+        type: result.type,
+        priority: result.priority,
+        customerName: user_name || 'Customer',
+        customerEmail: user_email || 'No email',
+        description: result.description,
+        bookingId: result.booking_id || undefined,
+        createdAt: result.created_at.toISOString()
+    }).then(adminEmailSuccess => {
+        console.log(`✅ Admin notification ${adminEmailSuccess ? 'sent' : 'failed'} for ticket #${result.ticket_id}`);
+    }).catch(adminEmailError => {
+        console.error(`❌ Admin email error:`, adminEmailError);
+    });
+}
+
         return c.json({ 
             success: true,
             message: 'Support ticket created successfully!',
@@ -61,10 +93,10 @@ export const createTicket = async (c: Context) => {
         }, 201);
 
     } catch (error: any) {
-        console.error('Error creating support ticket:', error.message);
+        console.error('❌ Error in createTicket:', error.message);
         return c.json({ 
             success: false,
-            error: 'Failed to create support ticket' 
+            error: 'Failed to create support ticket'
         }, 500);
     }
 }
@@ -453,6 +485,51 @@ export const getTicketStats = async (c: Context) => {
         return c.json({ 
             success: false,
             error: 'Failed to fetch ticket statistics' 
+        }, 500);
+    }
+}
+
+// Add this function to your support.controller.ts
+export const updateTicketPriority = async (c: Context) => {
+    try {
+        const ticket_id = parseInt(c.req.param('ticket_id'));
+        const body = await c.req.json();
+        
+        if (!body.priority) {
+            return c.json({ 
+                success: false,
+                error: 'Priority is required' 
+            }, 400);
+        }
+
+        const validPriorities = ['urgent', 'high', 'medium', 'low'];
+        if (!validPriorities.includes(body.priority)) {
+            return c.json({ 
+                success: false,
+                error: `Invalid priority. Must be one of: ${validPriorities.join(', ')}` 
+            }, 400);
+        }
+
+        const result = await supportServices.updateTicketPriorityService(ticket_id, body.priority);
+        
+        if (!result) {
+            return c.json({ 
+                success: false,
+                error: 'Ticket not found' 
+            }, 404);
+        }
+
+        return c.json({ 
+            success: true,
+            message: 'Ticket priority updated successfully',
+            ticket: result 
+        });
+
+    } catch (error: any) {
+        console.error('Error updating ticket priority:', error.message);
+        return c.json({ 
+            success: false,
+            error: 'Failed to update ticket priority' 
         }, 500);
     }
 }

@@ -291,47 +291,55 @@ export const getMySpendingStats = async (c: Context) => {
     }
 
     const db = getDbPool();
+    
+    // ✅ FIXED QUERY: Get total from COMPLETED bookings, not all payments
     const query = `
       SELECT 
-        -- Total spent
-        SUM(CASE WHEN payment_status = 'Completed' THEN amount ELSE 0 END) as total_spent,
+        -- Total spent from COMPLETED bookings only
+        SUM(CASE WHEN b.booking_status = 'Completed' THEN b.total_amount ELSE 0 END) as total_spent,
         
-        -- Monthly spending
-        FORMAT(created_at, 'yyyy-MM') as month,
-        SUM(CASE WHEN payment_status = 'Completed' AND FORMAT(created_at, 'yyyy-MM') = FORMAT(GETDATE(), 'yyyy-MM') THEN amount ELSE 0 END) as this_month_spent,
+        -- Monthly spending from COMPLETED bookings
+        SUM(CASE WHEN b.booking_status = 'Completed' AND FORMAT(b.return_date, 'yyyy-MM') = FORMAT(GETDATE(), 'yyyy-MM') THEN b.total_amount ELSE 0 END) as this_month_spent,
         
-        -- Payment methods
-        COUNT(CASE WHEN payment_method = 'stripe' THEN 1 END) as stripe_payments,
-        COUNT(CASE WHEN payment_method = 'mpesa' THEN 1 END) as mpesa_payments,
+        -- Payment methods count
+        COUNT(DISTINCT CASE WHEN p.payment_method = 'stripe' THEN p.payment_id END) as stripe_payments,
+        COUNT(DISTINCT CASE WHEN p.payment_method = 'mpesa' THEN p.payment_id END) as mpesa_payments,
         
-        -- Status breakdown
-        COUNT(CASE WHEN payment_status = 'Completed' THEN 1 END) as completed_payments,
-        COUNT(CASE WHEN payment_status = 'Pending' THEN 1 END) as pending_payments,
-        COUNT(CASE WHEN payment_status = 'Failed' THEN 1 END) as failed_payments,
+        -- Payment status breakdown (from PaymentsTable)
+        COUNT(CASE WHEN p.payment_status = 'Completed' THEN 1 END) as completed_payments,
+        COUNT(CASE WHEN p.payment_status = 'Pending' THEN 1 END) as pending_payments,
+        COUNT(CASE WHEN p.payment_status = 'Failed' THEN 1 END) as failed_payments,
         
-        -- Recent payments count
-        COUNT(*) as total_payments
-      FROM PaymentsTable
-      WHERE user_id = @user_id
-      GROUP BY FORMAT(created_at, 'yyyy-MM')
+        -- Total bookings count (for reference)
+        COUNT(DISTINCT b.booking_id) as total_bookings,
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'Completed' THEN b.booking_id END) as completed_bookings,
+        COUNT(DISTINCT CASE WHEN b.booking_status = 'Pending' THEN b.booking_id END) as pending_bookings
+        
+      FROM Bookings b
+      LEFT JOIN PaymentsTable p ON b.booking_id = p.booking_id
+      WHERE b.user_id = @user_id
     `;
     
     const result = await db.request()
       .input('user_id', customer.user_id)
       .query(query);
 
+    const stats = result.recordset[0] || {
+      total_spent: 0,
+      this_month_spent: 0,
+      stripe_payments: 0,
+      mpesa_payments: 0,
+      completed_payments: 0,
+      pending_payments: 0,
+      failed_payments: 0,
+      total_bookings: 0,
+      completed_bookings: 0,
+      pending_bookings: 0
+    };
+
     return c.json({ 
       success: true,
-      stats: result.recordset[0] || {
-        total_spent: 0,
-        this_month_spent: 0,
-        stripe_payments: 0,
-        mpesa_payments: 0,
-        completed_payments: 0,
-        pending_payments: 0,
-        failed_payments: 0,
-        total_payments: 0
-      }
+      stats
     });
   } catch (error: any) {
     console.error('Error fetching spending stats:', error);
@@ -363,15 +371,15 @@ export const checkoutBooking = async (c: Context) => {
             },
             quantity: 1,
         }];
-        const sessionParams: Stripe.Checkout.SessionCreateParams = {
-            payment_method_types: ['card'],
-            line_items,
-            mode: 'payment',
-            success_url: `http://localhost:5173/`,
-            // success_url: `${FRONTEND_URL}/success`,
-            // cancel_url: `${FRONTEND_URL}/failed`,
-            cancel_url: `http://localhost:5173/`,
-        };
+        // In checkoutBooking function, update the success_url:
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
+    payment_method_types: ['card'],
+    line_items,
+    mode: 'payment',
+    // Update this URL:
+    success_url: `http://localhost:5173/my-bookings?payment_success=true&booking_id=${booking.booking_id}&amount=${booking.total_amount}`,
+    cancel_url: `http://localhost:5173/my-bookings?payment_cancelled=true`,
+};
         const session: Stripe.Checkout.Session = await stripe.checkout.sessions.create(sessionParams);
         
         // Save payment details to the database        
@@ -390,37 +398,127 @@ export const checkoutBooking = async (c: Context) => {
     }
 };
 
+// In payment.controller.ts - Update the handleStripeWebhook function
 export const handleStripeWebhook = async (c: Context) => {
     const sig = c.req.header('stripe-signature');
     const rawBody = await c.req.text();
+    
     if (!sig) {
         console.error('Webhook Error: No stripe-signature header value was provided.');
         return c.text('Webhook Error: No stripe-signature header value was provided.', 400);
     }
+    
     let event: Stripe.Event;
     try {
-        event = stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET as string);
+        event = stripe.webhooks.constructEvent(
+            rawBody, 
+            sig, 
+            process.env.STRIPE_WEBHOOK_SECRET as string
+        );
     } catch (err: any) {
+        console.error('Webhook signature verification failed:', err.message);
         return c.text(`Webhook Error: ${err.message}`, 400);
     }
 
     // Handle the event
     switch (event.type) {
         case 'checkout.session.completed':
-            // const session = event.data.object as Stripe.Checkout.Session;
-            // // Update payment status in the database
-            // try {
-            //     const session_id = session.id;
-            //     const updateStatus = await updatePaymentBySessionIdService(session_id);
-            //     return c.json({ payment: updateStatus }, 200);
-            // } catch (err: any) {
-            //     return c.text(`Database Error: ${err.message}`, 500);
-            // }
+            const session = event.data.object as Stripe.Checkout.Session;
+            console.log('✅ Checkout session completed:', session.id);
+            
+            try {
+                // Update payment status in database
+                const db = getDbPool();
+                
+                // Find payment by session ID
+                const findQuery = `
+                    SELECT payment_id FROM PaymentsTable 
+                    WHERE transaction_id = @session_id
+                `;
+                
+                const result = await db.request()
+                    .input('session_id', session.id)
+                    .query(findQuery);
 
-        // Handle other event types as needed
+                if (result.recordset.length > 0) {
+                    const payment_id = result.recordset[0].payment_id;
+                    
+                    // Update payment status to Completed
+                    const updateQuery = `
+                        UPDATE PaymentsTable 
+                        SET payment_status = 'Completed',
+                            payment_date = GETDATE(),
+                            updated_at = GETDATE()
+                        WHERE payment_id = @payment_id
+                    `;
+                    
+                    await db.request()
+                        .input('payment_id', payment_id)
+                        .query(updateQuery);
+                    
+                    console.log(`✅ Payment ${payment_id} marked as Completed`);
+                    
+                    // Get booking ID for this payment
+                    const bookingQuery = `
+                        SELECT booking_id FROM PaymentsTable 
+                        WHERE payment_id = @payment_id
+                    `;
+                    
+                    const bookingResult = await db.request()
+                        .input('payment_id', payment_id)
+                        .query(bookingQuery);
+                    
+                    if (bookingResult.recordset.length > 0) {
+                        const booking_id = bookingResult.recordset[0].booking_id;
+                        
+                        // Update booking status to Pending (waiting for admin approval)
+                        const updateBookingQuery = `
+                            UPDATE Bookings 
+                            SET booking_status = 'pending',
+                                updated_at = GETDATE()
+                            WHERE booking_id = @booking_id
+                        `;
+                        
+                        await db.request()
+                            .input('booking_id', booking_id)
+                            .query(updateBookingQuery);
+                        
+                        console.log(`✅ Booking ${booking_id} set to pending (waiting admin approval)`);
+                    }
+                    
+                    // Here you could also:
+                    // 1. Send email confirmation to user
+                    // 2. Send notification to admin
+                    // 3. Trigger any other post-payment actions
+                    
+                    return c.json({ 
+                        success: true, 
+                        message: 'Payment processed successfully',
+                        payment_id: payment_id 
+                    }, 200);
+                } else {
+                    console.error('Payment not found for session:', session.id);
+                    return c.text('Payment not found', 404);
+                }
+            } catch (err: any) {
+                console.error('Database Error:', err.message);
+                return c.text(`Database Error: ${err.message}`, 500);
+            }
+
+        // Handle other event types
+        case 'payment_intent.succeeded':
+            console.log('PaymentIntent was successful!');
+            break;
+            
+        case 'payment_intent.payment_failed':
+            console.log('PaymentIntent failed!');
+            break;
+            
         default:
-            return c.text(`Unhandled event type ${event.type}`, 400);
+            console.log(`Unhandled event type: ${event.type}`);
     }
+    
+    return c.json({ received: true }, 200);
 };
 
 // Process Stripe webhook
@@ -530,14 +628,27 @@ export const updatePaymentStatus = async (c: Context) => {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
+    if (!payment_id) {
+      return c.json({ error: 'Payment ID is required' }, 400);
+    }
+
     if (!body.payment_status) {
       return c.json({ error: 'Payment status is required' }, 400);
     }
 
-    // You'll need to implement this service function
+    // Validate payment status
+    const validStatuses = ['Pending', 'Completed', 'Failed', 'Refunded'];
+    if (!validStatuses.includes(body.payment_status)) {
+      return c.json({ 
+        error: 'Invalid payment status', 
+        valid_statuses: validStatuses 
+      }, 400);
+    }
+
     const result = await paymentServices.updatePaymentStatusService(
       payment_id,
-      body.payment_status
+      body.payment_status,
+      body.admin_notes || ''
     );
 
     if (typeof result === "string") {
@@ -554,6 +665,7 @@ export const updatePaymentStatus = async (c: Context) => {
     return c.json({ error: error.message }, 500);
   }
 }
+
 
 // Export payments (admin only)
 export const exportPayments = async (c: Context) => {
@@ -583,3 +695,5 @@ export const exportPayments = async (c: Context) => {
     return c.json({ error: 'Failed to export payments' }, 500);
   }
 }
+
+// Add to payment.controller.ts

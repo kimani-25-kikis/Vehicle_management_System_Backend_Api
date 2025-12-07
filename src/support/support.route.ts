@@ -16,5 +16,6 @@ supportRoutes.patch('/tickets/admin/status/:ticket_id', supportControllers.updat
 supportRoutes.patch('/tickets/admin/notes/:ticket_id', supportControllers.addAdminNotes);
 supportRoutes.patch('/tickets/admin/assign/:ticket_id', supportControllers.assignTicket);
 supportRoutes.get('/tickets/admin/stats', supportControllers.getTicketStats);
+supportRoutes.patch('/tickets/admin/priority/:ticket_id', supportControllers.updateTicketPriority);
 
 export default supportRoutes;

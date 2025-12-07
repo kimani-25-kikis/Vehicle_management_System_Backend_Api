@@ -1,6 +1,7 @@
 import { type Context } from "hono"
 import * as userServices from "./users.service.ts";
 import bcrypt from "bcryptjs";
+import { getDbPool } from "../db/db.config.ts";
 //get all users
 export const getAllUsers = async (c: Context) => {
     try {
@@ -166,4 +167,101 @@ export const deleteUser = async (c: Context) => {
         console.error('Error deleting user:', error);
         return c.json({ error: 'Failed to delete user' }, 500);
     }
+}
+
+// Add this function to user.controller.ts
+
+export const changePassword = async (c: Context) => {
+  try {
+    console.log('🔑 changePassword called');
+    
+    const body = await c.req.json();
+    console.log('📦 Request body:', body);
+
+    const { current_password, new_password } = body;
+
+    // Validate required fields
+    if (!current_password || !new_password) {
+      return c.json({ error: 'Current password and new password are required' }, 400);
+    }
+
+    // Validate new password length
+    if (new_password.length < 6) {
+      return c.json({ error: 'New password must be at least 6 characters long' }, 400);
+    }
+
+    // Get authenticated user from middleware
+    const customer = c.customer;
+    if (!customer) {
+      console.log('❌ No customer in context');
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const db = getDbPool();
+    const user_id = customer.user_id;
+
+    // Get user with current password
+    const userQuery = `
+      SELECT user_id, password, email, first_name 
+      FROM Users 
+      WHERE user_id = @user_id
+    `;
+    
+    const userResult = await db.request()
+      .input('user_id', user_id)
+      .query(userQuery);
+
+    if (userResult.recordset.length === 0) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const user = userResult.recordset[0];
+    
+    // 1. Verify current password matches
+    const isPasswordValid = await bcrypt.compare(current_password, user.password);
+    
+    if (!isPasswordValid) {
+      return c.json({ 
+        error: 'Current password is incorrect' 
+      }, 400);
+    }
+
+    // 2. Check if new password is same as old password
+    const isSamePassword = await bcrypt.compare(new_password, user.password);
+    if (isSamePassword) {
+      return c.json({ 
+        error: 'New password must be different from current password' 
+      }, 400);
+    }
+
+    // 3. Hash the new password
+    const saltRounds = bcrypt.genSaltSync(10);
+    const hashedNewPassword = bcrypt.hashSync(new_password, saltRounds);
+
+    // 4. Update password in database
+    const updateQuery = `
+      UPDATE Users 
+      SET password = @new_password, updated_at = GETDATE()
+      WHERE user_id = @user_id
+    `;
+    
+    const updateResult = await db.request()
+      .input('new_password', hashedNewPassword)
+      .input('user_id', user_id)
+      .query(updateQuery);
+
+    console.log('✅ Password updated successfully for user:', user_id);
+
+    return c.json({ 
+      success: true,
+      message: 'Password updated successfully' 
+    }, 200);
+
+  } catch (error: any) {
+    console.error('❌ Error in changePassword:', error);
+    return c.json({ 
+      error: 'Failed to change password',
+      details: error.message 
+    }, 500);
+  }
 }

@@ -307,26 +307,35 @@ export const confirmPaymentService = async (
 // }
 
 // Get all payments (admin only)
+// In payment.service.ts - Update getAllPaymentsService
 export const getAllPaymentsService = async (): Promise<PaymentWithDetails[]> => {
   const db = getDbPool();
-  const query = `
-    SELECT 
-      p.*,
-      u.first_name + ' ' + u.last_name as user_name,
-      u.email as user_email,
-      b.booking_status,
-      vs.model as vehicle_model
-    FROM Payments p
-    JOIN Bookings b ON p.booking_id = b.booking_id
-    JOIN Users u ON b.user_id = u.user_id
-    JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
-    JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
-    ORDER BY p.created_at DESC
-  `;
-  const result = await db.request().query(query);
-  return result.recordset;
+  
+  try {
+    const query = `
+      SELECT 
+        p.*,
+        u.first_name + ' ' + u.last_name as user_name,
+        u.email as user_email,
+        b.booking_status,
+        vs.model as vehicle_model,
+        vs.manufacturer as vehicle_manufacturer
+      FROM PaymentsTable p
+      JOIN Bookings b ON p.booking_id = b.booking_id
+      JOIN Users u ON b.user_id = u.user_id
+      JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+      JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+      WHERE p.transaction_id IS NOT NULL -- Only show payments with transaction_id
+      ORDER BY p.created_at DESC
+    `;
+    
+    const result = await db.request().query(query);
+    return result.recordset;
+  } catch (error: any) {
+    console.error('Error in getAllPaymentsService:', error);
+    throw new Error("Failed to fetch payments: " + error.message);
+  }
 }
-
 // Process Stripe webhook
 export const processPaymentWebhookService = async (webhookData: any, stripeSignature: string): Promise<any | string> => {
   try {
@@ -540,24 +549,65 @@ export const getBookingByIdService = async (booking_id: number): Promise<any> =>
 }
 
 // Get payment statistics
+// In payment.service.ts - Update getPaymentStatsService
 export const getPaymentStatsService = async (): Promise<any> => {
   const db = getDbPool();
   
   try {
     const query = `
       SELECT 
+        -- Total revenue from COMPLETED payments only
         SUM(CASE WHEN payment_status = 'Completed' THEN amount ELSE 0 END) as total_revenue,
+        
+        -- Monthly revenue from COMPLETED payments in current month
+        SUM(CASE 
+          WHEN payment_status = 'Completed' 
+          AND MONTH(created_at) = MONTH(GETDATE()) 
+          AND YEAR(created_at) = YEAR(GETDATE()) 
+          THEN amount 
+          ELSE 0 
+        END) as monthly_revenue,
+        
+        -- Today's revenue from COMPLETED payments
+        SUM(CASE 
+          WHEN payment_status = 'Completed' 
+          AND CAST(created_at AS DATE) = CAST(GETDATE() AS DATE) 
+          THEN amount 
+          ELSE 0 
+        END) as today_revenue,
+        
+        -- Payment status breakdown
         COUNT(CASE WHEN payment_status = 'Completed' THEN 1 END) as completed_payments,
         COUNT(CASE WHEN payment_status = 'Pending' THEN 1 END) as pending_payments,
         COUNT(CASE WHEN payment_status = 'Failed' THEN 1 END) as failed_payments,
+        COUNT(CASE WHEN payment_status = 'Refunded' THEN 1 END) as refunded_payments,
+        
+        -- Refunded amount
         SUM(CASE WHEN payment_status = 'Refunded' THEN amount ELSE 0 END) as refunded_amount,
-        SUM(CASE WHEN payment_status = 'Completed' AND CAST(created_at AS DATE) = CAST(GETDATE() AS DATE) THEN amount ELSE 0 END) as today_revenue,
-        SUM(CASE WHEN payment_status = 'Completed' AND MONTH(created_at) = MONTH(GETDATE()) AND YEAR(created_at) = YEAR(GETDATE()) THEN amount ELSE 0 END) as monthly_revenue
+        
+        -- Total payments count
+        COUNT(*) as total_payments
+        
       FROM PaymentsTable
+      WHERE transaction_id IS NOT NULL -- Only payments with transaction_id
     `;
     
     const result = await db.request().query(query);
-    return result.recordset[0];
+    
+    // Default values if no payments
+    const stats = result.recordset[0] || {
+      total_revenue: 0,
+      monthly_revenue: 0,
+      today_revenue: 0,
+      completed_payments: 0,
+      pending_payments: 0,
+      failed_payments: 0,
+      refunded_payments: 0,
+      refunded_amount: 0,
+      total_payments: 0
+    };
+    
+    return stats;
   } catch (error: any) {
     console.error('Error in getPaymentStatsService:', error);
     throw new Error("Failed to fetch payment statistics: " + error.message);
@@ -565,13 +615,34 @@ export const getPaymentStatsService = async (): Promise<any> => {
 }
 
 // Update payment status
+// Add to payment.service.ts
 export const updatePaymentStatusService = async (
   payment_id: number,
-  payment_status: string
+  payment_status: string,
+  admin_notes?: string
 ): Promise<PaymentResponse | string> => {
   const db = getDbPool();
   
   try {
+    // 1. Check if payment exists
+    const checkQuery = `
+      SELECT payment_id, booking_id, payment_status 
+      FROM PaymentsTable 
+      WHERE payment_id = @payment_id
+    `;
+    
+    const checkResult = await db.request()
+      .input('payment_id', payment_id)
+      .query(checkQuery);
+
+    if (checkResult.recordset.length === 0) {
+      return "Payment not found";
+    }
+
+    const currentPayment = checkResult.recordset[0];
+    const booking_id = currentPayment.booking_id;
+
+    // 2. Update payment status
     const updateQuery = `
       UPDATE PaymentsTable 
       SET payment_status = @payment_status, 
@@ -586,34 +657,72 @@ export const updatePaymentStatusService = async (
       .query(updateQuery);
 
     if (result.recordset.length === 0) {
-      return "Payment not found";
+      return "Failed to update payment status";
     }
 
-    // If marking as refunded, also update booking status
-    if (payment_status === 'Refunded') {
-      const paymentQuery = `
-        SELECT booking_id FROM PaymentsTable WHERE payment_id = @payment_id
+    // 3. Add admin notes if provided
+    if (admin_notes) {
+      const notesQuery = `
+        UPDATE PaymentsTable 
+        SET admin_notes = CONCAT(COALESCE(admin_notes + ' | ', ''), @admin_notes)
+        WHERE payment_id = @payment_id
       `;
-      const paymentResult = await db.request()
+      
+      await db.request()
         .input('payment_id', payment_id)
-        .query(paymentQuery);
-
-      if (paymentResult.recordset.length > 0) {
-        const booking_id = paymentResult.recordset[0].booking_id;
-        
-        const updateBookingQuery = `
-          UPDATE Bookings 
-          SET booking_status = 'Cancelled', updated_at = GETDATE()
-          WHERE booking_id = @booking_id
-        `;
-        
-        await db.request()
-          .input('booking_id', booking_id)
-          .query(updateBookingQuery);
-      }
+        .input('admin_notes', `${new Date().toISOString()}: ${admin_notes}`)
+        .query(notesQuery);
     }
 
-    return result.recordset[0];
+    // 4. If marking as Completed, also update booking status to Confirmed
+    if (payment_status === 'Completed' && booking_id) {
+      const updateBookingQuery = `
+        UPDATE Bookings 
+        SET booking_status = 'Confirmed', 
+            updated_at = GETDATE()
+        WHERE booking_id = @booking_id
+      `;
+      
+      await db.request()
+        .input('booking_id', booking_id)
+        .query(updateBookingQuery);
+    }
+
+    // 5. If marking as Refunded, also update booking status to Cancelled
+    if (payment_status === 'Refunded' && booking_id) {
+      const updateBookingQuery = `
+        UPDATE Bookings 
+        SET booking_status = 'Cancelled', 
+            updated_at = GETDATE()
+        WHERE booking_id = @booking_id
+      `;
+      
+      await db.request()
+        .input('booking_id', booking_id)
+        .query(updateBookingQuery);
+    }
+
+    // 6. Get updated payment with details
+    const finalQuery = `
+      SELECT 
+        p.*,
+        u.first_name + ' ' + u.last_name as user_name,
+        u.email as user_email,
+        b.booking_status,
+        vs.model as vehicle_model
+      FROM PaymentsTable p
+      JOIN Bookings b ON p.booking_id = b.booking_id
+      JOIN Users u ON b.user_id = u.user_id
+      JOIN Vehicles v ON b.vehicle_id = v.vehicle_id
+      JOIN VehicleSpecifications vs ON v.vehicle_spec_id = vs.vehicle_spec_id
+      WHERE p.payment_id = @payment_id
+    `;
+    
+    const finalResult = await db.request()
+      .input('payment_id', payment_id)
+      .query(finalQuery);
+
+    return finalResult.recordset[0];
   } catch (error: any) {
     console.error('Error in updatePaymentStatusService:', error);
     return "Failed to update payment status: " + error.message;
@@ -697,3 +806,4 @@ export const exportPaymentsService = async (filters: any): Promise<string> => {
     throw new Error("Failed to export payments: " + error.message);
   }
 }
+

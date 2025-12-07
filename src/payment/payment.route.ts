@@ -18,6 +18,7 @@ paymentRoutes.get('/payments/export', adminRoleAuth, paymentControllers.exportPa
 
 paymentRoutes.get('/payments/my-payments', paymentControllers.getMyPayments)
 paymentRoutes.get('/payments/my-spending-stats', paymentControllers.getMySpendingStats)
+paymentRoutes.put('/payments/:payment_id/status', adminRoleAuth, paymentControllers.updatePaymentStatus)
 
 // Webhook route (no auth required for webhooks)
 paymentRoutes.post('/payments/webhook', paymentControllers.processPaymentWebhook)

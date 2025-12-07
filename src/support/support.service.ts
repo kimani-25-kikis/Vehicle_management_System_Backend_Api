@@ -1,4 +1,5 @@
 import { getDbPool } from "../db/db.config.ts";
+import sql from "mssql";
 
 // Add this helper function at the TOP
 const formatTicketWithAttachments = (ticket: any): SupportTicket => {
@@ -74,31 +75,58 @@ export interface CreateTicketData {
 export const createTicketService = async (data: CreateTicketData): Promise<SupportTicket | null> => {
     const db = getDbPool();
 
-    console.log("🟠 SERVICE - Creating ticket with data:", data);
+    console.log("🎯 SERVICE: Type received =", data.type);
+    console.log("🎯 SERVICE: Type is string? =", typeof data.type === 'string');
+    console.log("🎯 SERVICE: Type length =", data.type?.length);
 
-    const query = `
-        INSERT INTO SupportTickets (user_id, subject, description, type, booking_id, priority, status)
-        OUTPUT INSERTED.*
-        VALUES (@user_id, @subject, @description, @type, @booking_id, @priority, 'Open')
-    `;
-    
-    const request = db.request()
-        .input('user_id', data.user_id)
-        .input('subject', data.subject)
-        .input('description', data.description)
-        .input('type', data.type)
-        .input('priority', data.priority || 'medium');
-    
-    if (data.booking_id) {
-        request.input('booking_id', data.booking_id);
-    } else {
-        request.input('booking_id', null);
+    // GUARANTEE the type is never null/undefined
+    const ticketType = data.type || 'general_inquiry';
+    console.log("🎯 SERVICE: Using ticketType =", ticketType);
+
+    try {
+        // SIMPLE query - no complex parameter binding
+        const query = `
+            INSERT INTO SupportTickets 
+            (user_id, subject, description, type, booking_id, priority, status)
+            VALUES (@user_id, @subject, @description, @type, @booking_id, @priority, 'Open');
+            
+            SELECT SCOPE_IDENTITY() as ticket_id;
+        `;
+        
+        const request = db.request();
+        
+        // Add parameters
+        request.input('user_id', data.user_id);
+        request.input('subject', data.subject);
+        request.input('description', data.description);
+        request.input('type', ticketType); // This MUST have a value
+        request.input('priority', data.priority || 'medium');
+        request.input('booking_id', data.booking_id || null);
+        
+        console.log("🎯 SERVICE: Executing with @type =", ticketType);
+        
+        const result = await request.query(query);
+        const ticketId = result.recordset[0]?.ticket_id;
+        
+        if (ticketId) {
+            // Fetch the created ticket
+            const ticketQuery = `SELECT * FROM SupportTickets WHERE ticket_id = @ticket_id`;
+            const ticketResult = await db.request()
+                .input('ticket_id', ticketId)
+                .query(ticketQuery);
+            
+            console.log("✅ SERVICE: Ticket created with type =", ticketResult.recordset[0]?.type);
+            return formatTicketWithAttachments(ticketResult.recordset[0]);
+        }
+        
+        return null;
+        
+    } catch (error: any) {
+        console.error("❌ SERVICE ERROR:", error.message);
+        console.error("❌ Full error:", error);
+        throw error;
     }
-    
-    const result = await request.query(query);
-    return result.recordset[0] ? formatTicketWithAttachments(result.recordset[0]) : null;
 }
-
 // Get user's own tickets
 export const getUserTicketsService = async (user_id: number): Promise<SupportTicket[]> => {
     const db = getDbPool();
@@ -108,7 +136,7 @@ export const getUserTicketsService = async (user_id: number): Promise<SupportTic
             st.*,
             u.first_name,
             u.last_name,
-            u.email,
+            u.email as user_email,
             u.phone_number as user_phone,
             CONCAT(u.first_name, ' ', u.last_name) as user_name
         FROM SupportTickets st
@@ -140,7 +168,7 @@ export const getTicketByIdService = async (ticket_id: number): Promise<SupportTi
             st.*,
             u.first_name,
             u.last_name,
-            u.email,
+            u.email as user_email,
             u.phone_number as user_phone,
             CONCAT(u.first_name, ' ', u.last_name) as user_name,
             b.vehicle_id,
@@ -174,7 +202,7 @@ export const getAllTicketsService = async (
             st.*,
             u.first_name,
             u.last_name,
-            u.email,
+            u.email as user_email,
             u.phone_number as user_phone,
             CONCAT(u.first_name, ' ', u.last_name) as user_name,
             b.vehicle_id,
@@ -502,4 +530,23 @@ export const getTicketsByBookingIdService = async (booking_id: number): Promise<
         .query(query);
     
     return result.recordset.map(formatTicketWithAttachments);
+}
+
+// Add this function to your support.service.ts
+export const updateTicketPriorityService = async (ticket_id: number, priority: string): Promise<SupportTicket | null> => {
+    const db = getDbPool();
+    
+    const query = `
+        UPDATE SupportTickets 
+        SET priority = @priority, updated_at = GETDATE()
+        OUTPUT INSERTED.*
+        WHERE ticket_id = @ticket_id
+    `;
+    
+    const result = await db.request()
+        .input('ticket_id', ticket_id)
+        .input('priority', priority)
+        .query(query);
+    
+    return result.recordset[0] ? formatTicketWithAttachments(result.recordset[0]) : null;
 }
