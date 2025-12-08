@@ -1,4 +1,3 @@
-// uploads.controller.ts
 import { Hono } from 'hono' 
 type Context = Hono['Context'] 
 
@@ -7,7 +6,9 @@ import {
   getDriverLicenseUploadsService, 
   verifyDriverLicenseService,
   getUploadStatsService,
-  deleteUploadService
+  deleteUploadService,
+  getFileDataService,
+  readFileFromDisk
 } from './uploads.service.ts'
 import { getDbPool } from '../db/db.config.ts'
 
@@ -28,8 +29,13 @@ export const uploadDriverLicense = async (c: Context) => {
     const licenseNumber = body['licenseNumber'] as string
     const user = c.customer
 
+    console.log(`📤 Upload request from user ${user.user_id}`)
+    console.log(`📄 File info: ${file?.name} (${file?.size} bytes)`)
+    console.log(`📋 Type: ${type}, License: ${licenseNumber}`)
+
     // Validate required fields
     if (!file || !type || !licenseNumber) {
+      console.error('❌ Missing required fields')
       return c.json({ 
         success: false,
         error: 'File, type, and license number are required' 
@@ -37,6 +43,7 @@ export const uploadDriverLicense = async (c: Context) => {
     }
 
     if (!['front', 'back'].includes(type)) {
+      console.error(`❌ Invalid type: ${type}`)
       return c.json({ 
         success: false,
         error: 'Type must be either "front" or "back"' 
@@ -44,6 +51,7 @@ export const uploadDriverLicense = async (c: Context) => {
     }
 
     if (!file.type.startsWith('image/')) {
+      console.error(`❌ Invalid file type: ${file.type}`)
       return c.json({ 
         success: false,
         error: 'Only image files are allowed' 
@@ -51,6 +59,7 @@ export const uploadDriverLicense = async (c: Context) => {
     }
 
     if (file.size > 5 * 1024 * 1024) {
+      console.error(`❌ File too large: ${file.size} bytes`)
       return c.json({ 
         success: false,
         error: 'File size must be less than 5MB' 
@@ -58,6 +67,7 @@ export const uploadDriverLicense = async (c: Context) => {
     }
 
     if (licenseNumber.trim().length < 5) {
+      console.error(`❌ License number too short: ${licenseNumber}`)
       return c.json({ 
         success: false,
         error: 'License number must be at least 5 characters long' 
@@ -71,6 +81,9 @@ export const uploadDriverLicense = async (c: Context) => {
       user.user_id
     )
 
+    console.log(`✅ Upload successful: ${result.fileName}`)
+    console.log(`🔗 URL: ${result.url}`)
+
     return c.json({
       success: true,
       message: 'License image uploaded successfully',
@@ -83,7 +96,7 @@ export const uploadDriverLicense = async (c: Context) => {
     }, 201)
 
   } catch (error: any) {
-    console.error('Error uploading driver license:', error.message)
+    console.error('❌ Error uploading driver license:', error.message)
     
     if (error.message.includes('file system') || error.message.includes('directory')) {
       return c.json({ 
@@ -101,7 +114,7 @@ export const uploadDriverLicense = async (c: Context) => {
 
     return c.json({ 
       success: false,
-      error: 'Failed to upload driver license' 
+      error: 'Failed to upload driver license: ' + error.message
     }, 500)
   }
 }
@@ -110,8 +123,11 @@ export const getDriverLicenseUploads = async (c: Context) => {
   try {
     const user = c.customer
     
+    console.log(`📋 Get uploads request from user ${user.user_id} (${getUserRole(user)})`)
+    
     // Use the helper function to check admin status
     if (!isAdmin(user)) {
+      console.error(`❌ Unauthorized: User ${user.user_id} is not admin`)
       return c.json({ 
         success: false,
         error: 'Unauthorized. Admin access required.' 
@@ -124,6 +140,8 @@ export const getDriverLicenseUploads = async (c: Context) => {
     const page = parseInt(c.req.query('page') || '1')
     const limit = parseInt(c.req.query('limit') || '20')
 
+    console.log(`🔍 Filters: verified=${verified}, userId=${userId}, licenseNumber=${licenseNumber}`)
+
     const uploads = await getDriverLicenseUploadsService({
       verified: verified ? verified === 'true' : undefined,
       userId: userId ? parseInt(userId) : undefined,
@@ -131,6 +149,8 @@ export const getDriverLicenseUploads = async (c: Context) => {
       page,
       limit
     })
+
+    console.log(`✅ Found ${uploads.data.length} uploads`)
 
     return c.json({
       success: true,
@@ -141,10 +161,10 @@ export const getDriverLicenseUploads = async (c: Context) => {
     })
 
   } catch (error: any) {
-    console.error('Error fetching driver license uploads:', error.message)
+    console.error('❌ Error fetching driver license uploads:', error.message)
     return c.json({ 
       success: false,
-      error: 'Failed to fetch driver license uploads' 
+      error: 'Failed to fetch driver license uploads: ' + error.message
     }, 500)
   }
 }
@@ -154,8 +174,11 @@ export const getDriverLicenseUploadsByUser = async (c: Context) => {
     const user = c.customer
     const userId = parseInt(c.req.param('userId'))
 
+    console.log(`📋 Get uploads for user ${userId} requested by ${user.user_id}`)
+
     // Users can only access their own uploads, admins can access any
     if (!isAdmin(user) && user.user_id !== userId) {
+      console.error(`❌ Unauthorized: User ${user.user_id} cannot access uploads of user ${userId}`)
       return c.json({ 
         success: false,
         error: 'Unauthorized' 
@@ -168,6 +191,8 @@ export const getDriverLicenseUploadsByUser = async (c: Context) => {
       limit: 50
     })
 
+    console.log(`✅ Found ${uploads.data.length} uploads for user ${userId}`)
+
     return c.json({
       success: true,
       data: {
@@ -176,10 +201,10 @@ export const getDriverLicenseUploadsByUser = async (c: Context) => {
     })
 
   } catch (error: any) {
-    console.error('Error fetching user driver license uploads:', error.message)
+    console.error('❌ Error fetching user driver license uploads:', error.message)
     return c.json({ 
       success: false,
-      error: 'Failed to fetch driver license uploads' 
+      error: 'Failed to fetch driver license uploads: ' + error.message
     }, 500)
   }
 }
@@ -187,19 +212,23 @@ export const getDriverLicenseUploadsByUser = async (c: Context) => {
 export const verifyDriverLicense = async (c: Context) => {
   try {
     const user = c.customer
+    const uploadId = parseInt(c.req.param('uploadId'))
+    
+    console.log(`🔍 Verify request for upload ${uploadId} by user ${user.user_id}`)
     
     if (!isAdmin(user)) {
+      console.error(`❌ Unauthorized: User ${user.user_id} is not admin`)
       return c.json({ 
         success: false,
         error: 'Unauthorized. Admin access required.' 
       }, 403)
     }
 
-    const uploadId = parseInt(c.req.param('uploadId'))
     const body = await c.req.json()
     const { verified, notes } = body
 
     if (typeof verified !== 'boolean') {
+      console.error(`❌ Invalid verified field: ${verified}`)
       return c.json({ 
         success: false,
         error: 'Verified field is required and must be a boolean' 
@@ -207,6 +236,7 @@ export const verifyDriverLicense = async (c: Context) => {
     }
 
     if (notes && notes.length > 500) {
+      console.error(`❌ Notes too long: ${notes.length} characters`)
       return c.json({ 
         success: false,
         error: 'Verification notes must be less than 500 characters' 
@@ -216,11 +246,14 @@ export const verifyDriverLicense = async (c: Context) => {
     const result = await verifyDriverLicenseService(uploadId, verified, notes)
 
     if (!result.success) {
+      console.error(`❌ Verification failed: ${result.error}`)
       return c.json({ 
         success: false,
         error: result.error 
       }, 404)
     }
+
+    console.log(`✅ Upload ${uploadId} ${verified ? 'verified' : 'rejected'} successfully`)
 
     return c.json({
       success: true,
@@ -233,10 +266,10 @@ export const verifyDriverLicense = async (c: Context) => {
     })
 
   } catch (error: any) {
-    console.error('Error verifying driver license:', error.message)
+    console.error('❌ Error verifying driver license:', error.message)
     return c.json({ 
       success: false,
-      error: 'Failed to verify driver license' 
+      error: 'Failed to verify driver license: ' + error.message
     }, 500)
   }
 }
@@ -245,7 +278,10 @@ export const getUploadStats = async (c: Context) => {
   try {
     const user = c.customer
     
+    console.log(`📊 Stats request from user ${user.user_id}`)
+    
     if (!isAdmin(user)) {
+      console.error(`❌ Unauthorized: User ${user.user_id} is not admin`)
       return c.json({ 
         success: false,
         error: 'Unauthorized. Admin access required.' 
@@ -254,16 +290,18 @@ export const getUploadStats = async (c: Context) => {
 
     const stats = await getUploadStatsService()
 
+    console.log(`✅ Stats fetched: ${stats.overall.totalUploads} total uploads`)
+
     return c.json({
       success: true,
       data: stats
     })
 
   } catch (error: any) {
-    console.error('Error fetching upload stats:', error.message)
+    console.error('❌ Error fetching upload stats:', error.message)
     return c.json({ 
       success: false,
-      error: 'Failed to fetch upload statistics' 
+      error: 'Failed to fetch upload statistics: ' + error.message
     }, 500)
   }
 }
@@ -273,59 +311,53 @@ export const serveLicenseFile = async (c: Context) => {
     const filename = c.req.param('filename')
     const user = c.customer
 
+    console.log(`📄 File request: ${filename} by user ${user.user_id}`)
+
     if (!filename || filename.includes('..') || filename.includes('/')) {
+      console.error(`❌ Invalid filename: ${filename}`)
       return c.json({ 
         success: false,
         error: 'Invalid filename' 
       }, 400)
     }
 
-    const db = getDbPool()
-    const query = `
-      SELECT dlu.*, u.user_id, u.role
-      FROM DriverLicenseUploads dlu
-      JOIN Users u ON dlu.user_id = u.user_id
-      WHERE dlu.file_name = @filename
-    `
+    // Get file data with authentication check
+    const fileData = await getFileDataService(filename, user.user_id, getUserRole(user))
 
-    const result = await db.request()
-      .input('filename', filename)
-      .query(query)
-
-    if (!result.recordset[0]) {
+    if (!fileData) {
+      console.error(`❌ File not found or unauthorized: ${filename}`)
       return c.json({ 
         success: false,
-        error: 'File not found' 
+        error: 'File not found or access denied' 
       }, 404)
     }
 
-    const upload = result.recordset[0]
-
-    // Use helper function to check permissions
-    if (!isAdmin(user) && user.user_id !== upload.user_id) {
+    // Read the file from disk
+    const fileBuffer = await readFileFromDisk(fileData.filePath)
+    
+    if (!fileBuffer) {
+      console.error(`❌ Failed to read file: ${fileData.filePath}`)
       return c.json({ 
         success: false,
-        error: 'Unauthorized to access this file' 
-      }, 403)
+        error: 'Failed to read file from server' 
+      }, 500)
     }
 
-    return c.json({
-      success: true,
-      data: {
-        filename: upload.file_name,
-        fileType: upload.file_type,
-        licenseNumber: upload.license_number,
-        uploadedAt: upload.uploaded_at,
-        verified: upload.verified_by_admin,
-        userName: `${upload.first_name} ${upload.last_name}`
-      }
-    })
+    console.log(`✅ Serving file: ${filename} (${fileBuffer.length} bytes)`)
+
+    // Set headers for file download/viewing
+    c.header('Content-Type', fileData.contentType)
+    c.header('Content-Disposition', `inline; filename="${fileData.fileName}"`)
+    c.header('Cache-Control', 'public, max-age=86400') // Cache for 24 hours
+    c.header('Content-Length', fileBuffer.length.toString())
+
+    return c.body(fileBuffer)
 
   } catch (error: any) {
-    console.error('Error serving license file:', error.message)
+    console.error('❌ Error serving license file:', error.message)
     return c.json({ 
       success: false,
-      error: 'Failed to serve file' 
+      error: 'Failed to serve file: ' + error.message
     }, 500)
   }
 }
@@ -335,14 +367,19 @@ export const deleteDriverLicenseUpload = async (c: Context) => {
     const user = c.customer
     const uploadId = parseInt(c.req.param('uploadId'))
 
+    console.log(`🗑️ Delete request for upload ${uploadId} by user ${user.user_id}`)
+
     const result = await deleteUploadService(uploadId, user.user_id, getUserRole(user))
 
     if (!result.success) {
+      console.error(`❌ Delete failed: ${result.error}`)
       return c.json({ 
         success: false,
         error: result.error 
       }, result.error === 'Upload not found' ? 404 : 403)
     }
+
+    console.log(`✅ Upload ${uploadId} deleted successfully`)
 
     return c.json({
       success: true,
@@ -350,10 +387,54 @@ export const deleteDriverLicenseUpload = async (c: Context) => {
     })
 
   } catch (error: any) {
-    console.error('Error deleting driver license upload:', error.message)
+    console.error('❌ Error deleting driver license upload:', error.message)
     return c.json({ 
       success: false,
-      error: 'Failed to delete driver license upload' 
+      error: 'Failed to delete driver license upload: ' + error.message
+    }, 500)
+  }
+}
+
+// NEW: Endpoint to get file info (for debugging)
+export const getFileInfo = async (c: Context) => {
+  try {
+    const filename = c.req.param('filename')
+    const user = c.customer
+
+    console.log(`🔍 File info request: ${filename} by user ${user.user_id}`)
+
+    if (!filename) {
+      return c.json({ 
+        success: false,
+        error: 'Filename is required' 
+      }, 400)
+    }
+
+    const fileData = await getFileDataService(filename, user.user_id, getUserRole(user))
+
+    if (!fileData) {
+      return c.json({ 
+        success: false,
+        error: 'File not found or access denied' 
+      }, 404)
+    }
+
+    return c.json({
+      success: true,
+      data: {
+        fileName: fileData.fileName,
+        filePath: fileData.filePath,
+        contentType: fileData.contentType,
+        userId: fileData.userId,
+        userName: fileData.userName
+      }
+    })
+
+  } catch (error: any) {
+    console.error('❌ Error getting file info:', error.message)
+    return c.json({ 
+      success: false,
+      error: 'Failed to get file info: ' + error.message
     }, 500)
   }
 }

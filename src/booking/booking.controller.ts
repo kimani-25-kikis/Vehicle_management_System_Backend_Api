@@ -1,5 +1,7 @@
 import { type Context } from "hono"
 import * as bookingServices from "./booking.service.ts"
+import path from 'path'
+import fs from 'fs/promises'
 
 // Helper function to compare dates without time (timezone-safe)
 const isDateInPast = (dateString: string): boolean => {
@@ -447,163 +449,259 @@ export const exportBookings = async (c: Context) => {
 }
 
 // Download driver license FRONT (admin only) - Node.js version
+// In booking.controller.ts - Direct download implementation
+export const downloadDriverLicense = async (c: Context) => {
+    try {
+        const booking_id = parseInt(c.req.param('booking_id'))
+        const side = c.req.param('side') as 'front' | 'back'
+        const customer = c.customer;
+        
+        if (customer.user_type !== 'admin') {
+            return c.json({ error: 'Unauthorized' }, 403);
+        }
+        
+        console.log(`🔍 Direct download for booking ${booking_id} - ${side} license`);
+        
+        const booking = await bookingServices.getBookingByIdService(booking_id);
+        
+        if (!booking) {
+            return c.json({ error: 'Booking not found' }, 404);
+        }
+        
+        const licenseUrl = side === 'front' 
+            ? booking.driver_license_front_url 
+            : booking.driver_license_back_url;
+        
+        if (!licenseUrl) {
+            return c.json({ 
+                error: `${side} license not found for this booking` 
+            }, 404);
+        }
+        
+        console.log(`✅ License URL from DB: ${licenseUrl}`);
+        
+        // Extract filename from URL - handle both absolute and relative URLs
+        let filename = '';
+        if (licenseUrl.includes('/')) {
+            filename = licenseUrl.split('/').pop() || `license-${side}-${booking_id}.jpg`;
+        } else {
+            filename = licenseUrl;
+        }
+        
+        // Clean up filename (remove query parameters if any)
+        filename = filename.split('?')[0];
+        
+        console.log(`📄 Extracted filename: ${filename}`);
+        
+        // Build file path - adjust this based on where your files are stored
+        const uploadsDir = path.join(process.cwd(), 'uploads', 'driver-licenses');
+        const filePath = path.join(uploadsDir, filename);
+        
+        console.log(`📁 Looking for file at: ${filePath}`);
+        
+        // Check if file exists
+        try {
+            await fs.access(filePath);
+            console.log(`✅ File exists on disk`);
+        } catch (error) {
+            console.error(`❌ File not found: ${filePath}`);
+            console.error(`❌ Error details:`, error);
+            
+            // Alternative: Try different path patterns
+            const alternativePaths = [
+                path.join(process.cwd(), 'uploads', filename),
+                path.join(process.cwd(), 'public', 'uploads', 'driver-licenses', filename),
+                path.join(process.cwd(), 'public', 'uploads', filename),
+                path.join(__dirname, '..', 'uploads', 'driver-licenses', filename),
+            ];
+            
+            let foundPath = null;
+            for (const altPath of alternativePaths) {
+                try {
+                    await fs.access(altPath);
+                    foundPath = altPath;
+                    console.log(`✅ Found file at alternative path: ${altPath}`);
+                    break;
+                } catch {
+                    // Continue to next path
+                }
+            }
+            
+            if (!foundPath) {
+                return c.json({ 
+                    success: false,
+                    error: 'License file not found on server',
+                    details: {
+                        expectedPath: filePath,
+                        filename: filename,
+                        licenseUrl: licenseUrl
+                    }
+                }, 404);
+            }
+            
+            // Use found path
+            const fileBuffer = await fs.readFile(foundPath);
+            return serveFile(c, filename, fileBuffer, side);
+        }
+        
+        // Read and serve the file
+        const fileBuffer = await fs.readFile(filePath);
+        console.log(`✅ Serving file: ${filename} (${fileBuffer.length} bytes)`);
+        
+        return serveFile(c, filename, fileBuffer, side);
+        
+    } catch (error: any) {
+        console.error(`❌ Error downloading driver license:`, error.message);
+        console.error(`❌ Stack trace:`, error.stack);
+        return c.json({ 
+            success: false,
+            error: 'Failed to download driver license: ' + error.message 
+        }, 500);
+    }
+}
+
+// Helper function to serve the file
+const serveFile = async (c: Context, filename: string, fileBuffer: Buffer, side: 'front' | 'back') => {
+    try {
+        // Determine content type from file extension
+        const ext = path.extname(filename).toLowerCase();
+        let contentType = 'image/jpeg'; // Default
+        
+        if (ext === '.png') contentType = 'image/png';
+        else if (ext === '.gif') contentType = 'image/gif';
+        else if (ext === '.pdf') contentType = 'application/pdf';
+        else if (ext === '.webp') contentType = 'image/webp';
+        
+        console.log(`📦 Content-Type: ${contentType}`);
+        
+        // Set headers for download
+        c.header('Content-Type', contentType);
+        c.header('Content-Disposition', `attachment; filename="driver-license-${side}-${Date.now()}${ext}"`);
+        c.header('Cache-Control', 'no-cache');
+        c.header('Content-Length', fileBuffer.length.toString());
+        
+        return c.body(fileBuffer.toString('binary'), 200);
+        
+    } catch (error: any) {
+        console.error(`❌ Error serving file:`, error.message);
+        throw error;
+    }
+}
+
+// Alternative: Keep separate endpoints for front/back if needed
 export const downloadDriverLicenseFront = async (c: Context) => {
     try {
-        const booking_id = parseInt(c.req.param('booking_id'))
+        const booking_id = parseInt(c.req.param('booking_id'));
         const customer = c.customer;
         
         if (customer.user_type !== 'admin') {
             return c.json({ error: 'Unauthorized' }, 403);
         }
         
-        console.log(`🔍 Download request for booking ${booking_id} - front license`);
+        console.log(`🔍 Download front license for booking ${booking_id}`);
         
-        const result = await bookingServices.downloadDriverLicenseService(booking_id, 'front');
+        const booking = await bookingServices.getBookingByIdService(booking_id);
         
-        console.log(`📋 Service result for front license:`, result);
-        
-        if (typeof result === "string") {
-            console.error(`❌ Error: ${result}`);
-            return c.json({ error: result }, 400);
+        if (!booking) {
+            return c.json({ error: 'Booking not found' }, 404);
         }
         
-        // Check what type of URL we have
-        console.log(`🔗 License URL: ${result.url}`);
-        
-        // If it's an HTTP/HTTPS URL (cloud storage)
-        if (result.url && result.url.startsWith('http')) {
-            console.log(`🌐 External URL detected`);
-            
-            try {
-                // Fetch the image from external URL
-                const imageResponse = await fetch(result.url);
-                
-                if (!imageResponse.ok) {
-                    console.error(`❌ Failed to fetch image: ${imageResponse.status}`);
-                    // Fallback: return the URL
-                    return c.json({
-                        success: true,
-                        download_url: result.url,
-                        filename: result.filename,
-                        message: 'Failed to stream image, use URL directly'
-                    }, 200);
-                }
-                
-                // Get image data
-                const imageBuffer = await imageResponse.arrayBuffer();
-                console.log(`✅ Image fetched successfully (${imageBuffer.byteLength} bytes)`);
-                
-                // Set headers for download
-                c.header('Content-Type', 'image/jpeg');
-                c.header('Content-Disposition', `attachment; filename="${result.filename}"`);
-                c.header('Cache-Control', 'no-cache');
-                
-                return c.body(new Uint8Array(imageBuffer));
-                
-            } catch (fetchError) {
-                console.error(`❌ Error fetching image:`, fetchError);
-                // Fallback: return the URL
-                return c.json({
-                    success: true,
-                    download_url: result.url,
-                    filename: result.filename,
-                    message: 'Cannot stream image directly, use URL below'
-                }, 200);
-            }
+        if (!booking.driver_license_front_url) {
+            return c.json({ error: 'Front license not found for this booking' }, 404);
         }
         
-        // If no valid URL or we can't handle it, return JSON with URL
-        return c.json({
-            success: true,
-            download_url: result.url,
-            filename: result.filename
-        }, 200);
+        // Extract filename
+        const licenseUrl = booking.driver_license_front_url;
+        let filename = licenseUrl.includes('/') 
+            ? licenseUrl.split('/').pop() 
+            : licenseUrl;
+        
+        filename = filename?.split('?')[0] || `front-license-${booking_id}.jpg`;
+        
+        // Find file
+        const uploadsDir = path.join(process.cwd(), 'uploads', 'driver-licenses');
+        const filePath = path.join(uploadsDir, filename);
+        
+        try {
+            await fs.access(filePath);
+        } catch {
+            return c.json({ 
+                error: 'Front license file not found on server',
+                path: filePath 
+            }, 404);
+        }
+        
+        const fileBuffer = await fs.readFile(filePath);
+        
+        // Set headers
+        c.header('Content-Type', 'image/jpeg');
+        c.header('Content-Disposition', `attachment; filename="driver-license-front-${booking_id}.jpg"`);
+        c.header('Cache-Control', 'no-cache');
+        
+        return c.body(fileBuffer);
         
     } catch (error: any) {
-        console.error('❌ Error downloading driver license front:', error.message);
-        return c.json({ error: 'Failed to download driver license' }, 500);
+        console.error('Error downloading front license:', error.message);
+        return c.json({ error: 'Failed to download front license' }, 500);
     }
 }
 
-// Download driver license BACK (admin only) - Node.js version
 export const downloadDriverLicenseBack = async (c: Context) => {
     try {
-        const booking_id = parseInt(c.req.param('booking_id'))
+        const booking_id = parseInt(c.req.param('booking_id'));
         const customer = c.customer;
         
         if (customer.user_type !== 'admin') {
             return c.json({ error: 'Unauthorized' }, 403);
         }
         
-        console.log(`🔍 Download request for booking ${booking_id} - back license`);
+        console.log(`🔍 Download back license for booking ${booking_id}`);
         
-        const result = await bookingServices.downloadDriverLicenseService(booking_id, 'back');
+        const booking = await bookingServices.getBookingByIdService(booking_id);
         
-        console.log(`📋 Service result for back license:`, result);
-        
-        if (typeof result === "string") {
-            console.error(`❌ Error: ${result}`);
-            return c.json({ error: result }, 400);
+        if (!booking) {
+            return c.json({ error: 'Booking not found' }, 404);
         }
         
-        // Check what type of URL we have
-        console.log(`🔗 License URL: ${result.url}`);
-        
-        // If it's an HTTP/HTTPS URL (cloud storage)
-        if (result.url && result.url.startsWith('http')) {
-            console.log(`🌐 External URL detected`);
-            
-            try {
-                // Fetch the image from external URL
-                const imageResponse = await fetch(result.url);
-                
-                if (!imageResponse.ok) {
-                    console.error(`❌ Failed to fetch image: ${imageResponse.status}`);
-                    // Fallback: return the URL
-                    return c.json({
-                        success: true,
-                        download_url: result.url,
-                        filename: result.filename,
-                        message: 'Failed to stream image, use URL directly'
-                    }, 200);
-                }
-                
-                // Get image data
-                const imageBuffer = await imageResponse.arrayBuffer();
-                console.log(`✅ Image fetched successfully (${imageBuffer.byteLength} bytes)`);
-                
-                // Set headers for download
-                c.header('Content-Type', 'image/jpeg');
-                c.header('Content-Disposition', `attachment; filename="${result.filename}"`);
-                c.header('Cache-Control', 'no-cache');
-                
-                return c.body(new Uint8Array(imageBuffer));
-                
-            } catch (fetchError) {
-                console.error(`❌ Error fetching image:`, fetchError);
-                // Fallback: return the URL
-                return c.json({
-                    success: true,
-                    download_url: result.url,
-                    filename: result.filename,
-                    message: 'Cannot stream image directly, use URL below'
-                }, 200);
-            }
+        if (!booking.driver_license_back_url) {
+            return c.json({ error: 'Back license not found for this booking' }, 404);
         }
         
-        // If no valid URL or we can't handle it, return JSON with URL
-        return c.json({
-            success: true,
-            download_url: result.url,
-            filename: result.filename
-        }, 200);
+        // Extract filename
+        const licenseUrl = booking.driver_license_back_url;
+        let filename = licenseUrl.includes('/') 
+            ? licenseUrl.split('/').pop() 
+            : licenseUrl;
+        
+        filename = filename?.split('?')[0] || `back-license-${booking_id}.jpg`;
+        
+        // Find file
+        const uploadsDir = path.join(process.cwd(), 'uploads', 'driver-licenses');
+        const filePath = path.join(uploadsDir, filename);
+        
+        try {
+            await fs.access(filePath);
+        } catch {
+            return c.json({ 
+                error: 'Back license file not found on server',
+                path: filePath 
+            }, 404);
+        }
+        
+        const fileBuffer = await fs.readFile(filePath);
+        
+        // Set headers
+        c.header('Content-Type', 'image/jpeg');
+        c.header('Content-Disposition', `attachment; filename="driver-license-back-${booking_id}.jpg"`);
+        c.header('Cache-Control', 'no-cache');
+        
+        return c.body(fileBuffer);
         
     } catch (error: any) {
-        console.error('❌ Error downloading driver license back:', error.message);
-        return c.json({ error: 'Failed to download driver license' }, 500);
+        console.error('Error downloading back license:', error.message);
+        return c.json({ error: 'Failed to download back license' }, 500);
     }
 }
-
 // UPDATED verifyDriverLicense controller to support download
 export const verifyDriverLicense = async (c: Context) => {
     try {
