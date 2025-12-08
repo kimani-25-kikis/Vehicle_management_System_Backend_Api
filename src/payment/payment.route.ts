@@ -4,10 +4,10 @@ import { bothRolesAuth, adminRoleAuth } from '../middleware/bearAuth.ts'
 
 const paymentRoutes = new Hono()
 
-// ADD THIS LINE - Apply auth to all payment routes
-paymentRoutes.use('*', bothRolesAuth)
 
-// Now all these routes will be protected
+// paymentRoutes.use('*', bothRolesAuth)
+
+
 paymentRoutes.post('/payments/create-intent', paymentControllers.checkoutBooking)
 paymentRoutes.post('/payments/confirm', paymentControllers.confirmPayment)
 paymentRoutes.get('/payments/booking/:booking_id', paymentControllers.getPaymentByBookingId)
@@ -22,5 +22,10 @@ paymentRoutes.put('/payments/:payment_id/status', adminRoleAuth, paymentControll
 
 // Webhook route (no auth required for webhooks)
 paymentRoutes.post('/payments/webhook', paymentControllers.processPaymentWebhook)
+paymentRoutes.post('/payments/paystack-webhook', paymentControllers.handlePaystackWebhook);
+
+// ==================== M-PESA (PAYSTACK) ROUTES ====================
+paymentRoutes.post('/payments/mpesa/initialize', paymentControllers.initializeMpesaPayment)
+
 
 export default paymentRoutes

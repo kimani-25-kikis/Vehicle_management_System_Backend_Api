@@ -278,8 +278,8 @@ export const updateUserRole = async (c: Context) => {
         }
 
         // Validate user_type value
-        if (!['user', 'admin'].includes(body.user_type)) {
-            return c.json({ error: 'user_type must be either "user" or "admin"' }, 400);
+        if (!['customer', 'admin'].includes(body.user_type)) {
+            return c.json({ error: 'user_type must be either "customer" or "admin"' }, 400);
         }
 
         // Check if user exists

@@ -807,3 +807,70 @@ export const exportPaymentsService = async (filters: any): Promise<string> => {
   }
 }
 
+export const getPaymentByReferenceService = async (reference: string, user_id: number): Promise<any> => {
+  const db = getDbPool();
+  
+  try {
+    const query = `
+      SELECT 
+        p.*,
+        b.booking_status,
+        b.total_amount as booking_total,
+        u.first_name + ' ' + u.last_name as user_name,
+        u.email as user_email
+      FROM PaymentsTable p
+      JOIN Bookings b ON p.booking_id = b.booking_id
+      JOIN Users u ON b.user_id = u.user_id
+      WHERE p.transaction_id = @reference AND p.user_id = @user_id
+    `;
+    
+    const result = await db.request()
+      .input('reference', reference)
+      .input('user_id', user_id)
+      .query(query);
+
+    return result.recordset[0] || null;
+  } catch (error: any) {
+    console.error('Error in getPaymentByReferenceService:', error);
+    throw new Error("Failed to fetch payment by reference: " + error.message);
+  }
+};
+
+/**
+ * Update payment status for Paystack payments
+ */
+export const updatePaystackPaymentService = async (
+  payment_id: number,
+  status: string,
+  payment_data?: any
+): Promise<PaymentResponse | string> => {
+  const db = getDbPool();
+  
+  try {
+    const updateQuery = `
+      UPDATE PaymentsTable 
+      SET payment_status = @payment_status,
+          payment_date = CASE WHEN @payment_status = 'Completed' THEN GETDATE() ELSE payment_date END,
+          payment_data = COALESCE(@payment_data, payment_data),
+          updated_at = GETDATE()
+      OUTPUT INSERTED.*
+      WHERE payment_id = @payment_id
+    `;
+    
+    const result = await db.request()
+      .input('payment_id', payment_id)
+      .input('payment_status', status)
+      .input('payment_data', payment_data ? JSON.stringify(payment_data) : null)
+      .query(updateQuery);
+
+    if (result.recordset.length === 0) {
+      return "Payment not found";
+    }
+
+    return result.recordset[0];
+  } catch (error: any) {
+    console.error('Error in updatePaystackPaymentService:', error);
+    return "Failed to update payment: " + error.message;
+  }
+};
+

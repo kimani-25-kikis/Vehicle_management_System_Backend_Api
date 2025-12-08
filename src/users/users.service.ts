@@ -104,7 +104,7 @@ export const createUserService = async (
     email: string,
     phone_number: string | null,
     password: string,
-    user_type: string = 'user',
+    user_type: string = 'customer',
     address: string | null = null
 ): Promise<UserResponse | null> => {
     const db = getDbPool();
