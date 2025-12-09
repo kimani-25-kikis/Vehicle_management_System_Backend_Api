@@ -94,6 +94,7 @@ export const getUserById = async (c: Context) => {
 
 //update user by user_id
 //update user by user_id - FIXED VERSION
+// Update user by user_id - ENHANCED VERSION
 export const updateUser = async (c: Context) => {
     try {
         const user_id = parseInt(c.req.param('user_id'))
@@ -113,6 +114,11 @@ export const updateUser = async (c: Context) => {
             }
         }
 
+        // Validate user_type if provided
+        if (body.user_type && !['customer', 'admin'].includes(body.user_type)) {
+            return c.json({ error: 'user_type must be either "customer" or "admin"' }, 400);
+        }
+
         // Only hash password if it's provided and different from current
         let hashedPassword = checkExists.password; // Keep current password by default
         
@@ -121,6 +127,7 @@ export const updateUser = async (c: Context) => {
             hashedPassword = bcrypt.hashSync(body.password, saltRounds);
         }
 
+        // Call service with ALL fields including user_type
         const result = await userServices.updateUserService(
             user_id, 
             body.first_name, 
@@ -128,11 +135,12 @@ export const updateUser = async (c: Context) => {
             body.email, 
             body.phone_number, 
             hashedPassword,
-            body.address // Add address
+            body.address,
+            body.user_type  // Pass user_type to service
         );
         
         if (result === null) {
-            return c.json({ error: 'Failed to update user' }, 404);
+            return c.json({ error: 'Failed to update user' }, 500);
         }
 
         return c.json({ 
@@ -144,7 +152,7 @@ export const updateUser = async (c: Context) => {
         console.error('Error updating user:', error);
         return c.json({ error: 'Failed to update user' }, 500);
     }
-} 
+}
 
 //delete user by user_id
 export const deleteUser = async (c: Context) => {

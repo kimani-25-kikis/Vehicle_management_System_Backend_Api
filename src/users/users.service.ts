@@ -41,15 +41,16 @@ export const getUserByEmailService = async (email: string): Promise<UserResponse
 
 
 //update user by user_id
-//update user by user_id - FIXED VERSION
+// Update user by user_id - ENHANCED VERSION to include user_type
 export const updateUserService = async (
     user_id: number, 
-    first_name: string, 
-    last_name: string, 
-    email: string, 
-    phone_number: string, 
-    password: string,
-    address?: string  // Add address parameter
+    first_name?: string, 
+    last_name?: string, 
+    email?: string, 
+    phone_number?: string, 
+    password?: string,
+    address?: string,
+    user_type?: string  // ADD THIS PARAMETER
 ): Promise<UserResponse | null> => {
     const db = getDbPool();
     
@@ -80,6 +81,10 @@ export const updateUserService = async (
     if (address !== undefined) {
         updates.push('address = @address');
         inputs.address = address;
+    }
+    if (user_type !== undefined) {  // ADD THIS CHECK
+        updates.push('user_type = @user_type');
+        inputs.user_type = user_type;
     }
     
     if (updates.length === 0) {

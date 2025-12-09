@@ -101,3 +101,4 @@ export const customerRoleAuth = async (c: Context, next: Next) => await authMidd
 
 
 export const bothRolesAuth = async (c: Context, next: Next) => await authMiddleware(c, next, "both");
+

@@ -5,7 +5,7 @@ import { bothRolesAuth, adminRoleAuth } from '../middleware/bearAuth.ts'
 const paymentRoutes = new Hono()
 
 
-// paymentRoutes.use('*', bothRolesAuth)
+ paymentRoutes.use('*', bothRolesAuth)
 
 
 paymentRoutes.post('/payments/create-intent', paymentControllers.checkoutBooking)
