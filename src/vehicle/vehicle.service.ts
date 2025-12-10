@@ -1,4 +1,10 @@
 import { getDbPool } from "../db/db.config.ts"
+import { 
+  uploadVehicleImage, 
+  deleteVehicleImage,
+  deleteVehicleImages,
+  type CloudinaryUploadResult 
+} from '../cloudinary/vehicleCloudinary.service.ts';
 
 interface VehicleResponse {
     vehicle_id: number;
@@ -320,6 +326,7 @@ export const getVehicleByIdService = async (vehicle_id: number): Promise<Vehicle
 }
 
 // Create new vehicle
+// Update the createVehicleService function
 export const createVehicleService = async (
     vehicle_spec_id: number | undefined,
     rental_rate: number,
@@ -335,24 +342,54 @@ export const createVehicleService = async (
     features?: string,
     vehicle_type?: string,
     image_url?: string,
-    availability?: boolean  // Add this parameter
+    image_file?: { buffer: Buffer; fileName: string; mimeType: string },
+    availability?: boolean
 ): Promise<VehicleWithSpecification | string> => {
     const db = getDbPool();
     
+    // Declare these variables at the function scope so they're accessible in catch block
+    let cloudinaryImageUrl: string | undefined = image_url;
+    let cloudinaryPublicId: string | null = null;
+    
     try {
+        // Handle image upload if file is provided
+        if (image_file) {
+            try {
+                const uploadResult = await uploadVehicleImage(
+                    image_file.buffer,
+                    image_file.fileName
+                );
+                cloudinaryImageUrl = uploadResult.secure_url;
+                cloudinaryPublicId = uploadResult.public_id;
+            } catch (uploadError) {
+                console.error('Image upload failed:', uploadError);
+                return "Failed to upload vehicle image";
+            }
+        }
+
         let final_vehicle_spec_id = vehicle_spec_id;
 
         // If no vehicle_spec_id provided, create new specification first
         if (!vehicle_spec_id) {
             if (!manufacturer || !model || !year || !fuel_type || !seating_capacity || !vehicle_type) {
+                // Clean up uploaded image if validation fails
+                if (cloudinaryPublicId) {
+                    try {
+                        await deleteVehicleImage(cloudinaryPublicId);
+                    } catch (deleteError) {
+                        console.error('Failed to cleanup uploaded image:', deleteError);
+                    }
+                }
                 return "Vehicle specification data is required when vehicle_spec_id is not provided";
             }
 
             const specQuery = `
                 INSERT INTO VehicleSpecifications 
-                (manufacturer, model, year, fuel_type, engine_capacity, transmission, seating_capacity, color, features, vehicle_type, image_url)
+                (manufacturer, model, year, fuel_type, engine_capacity, transmission, 
+                 seating_capacity, color, features, vehicle_type, image_url, image_public_id)
                 OUTPUT INSERTED.vehicle_spec_id
-                VALUES (@manufacturer, @model, @year, @fuel_type, @engine_capacity, @transmission, @seating_capacity, @color, @features, @vehicle_type, @image_url)
+                VALUES (@manufacturer, @model, @year, @fuel_type, @engine_capacity, @transmission, 
+                        @seating_capacity, @color, @features, @vehicle_type, @image_url, @image_public_id)
             `;
             
             const specResult = await db.request()
@@ -366,10 +403,28 @@ export const createVehicleService = async (
                 .input('color', color || null)
                 .input('features', features || null)
                 .input('vehicle_type', vehicle_type)
-                .input('image_url', image_url || null)
+                .input('image_url', cloudinaryImageUrl || null)
+                .input('image_public_id', cloudinaryPublicId || null)
                 .query(specQuery);
 
             final_vehicle_spec_id = specResult.recordset[0].vehicle_spec_id;
+        } else {
+            // Update existing specification with new image if provided
+            if (cloudinaryImageUrl) {
+                const updateSpecQuery = `
+                    UPDATE VehicleSpecifications 
+                    SET image_url = @image_url, 
+                        image_public_id = @image_public_id,
+                        updated_at = GETDATE()
+                    WHERE vehicle_spec_id = @vehicle_spec_id
+                `;
+                
+                await db.request()
+                    .input('vehicle_spec_id', final_vehicle_spec_id)
+                    .input('image_url', cloudinaryImageUrl)
+                    .input('image_public_id', cloudinaryPublicId)
+                    .query(updateSpecQuery);
+            }
         }
 
         // Create the vehicle WITH availability
@@ -383,15 +438,38 @@ export const createVehicleService = async (
             .input('vehicle_spec_id', final_vehicle_spec_id)
             .input('rental_rate', rental_rate)
             .input('current_location', current_location)
-            .input('availability', availability !== undefined ? availability : true)  // Default to true if not specified
+            .input('availability', availability !== undefined ? availability : true)
             .query(vehicleQuery);
 
         const vehicle = vehicleResult.recordset[0];
         
         // Get the full vehicle with specification
-        return await getVehicleByIdService(vehicle.vehicle_id) || "Failed to retrieve created vehicle";
+        const createdVehicle = await getVehicleByIdService(vehicle.vehicle_id);
+        if (!createdVehicle) {
+            // Clean up if we can't retrieve the created vehicle
+            if (cloudinaryPublicId) {
+                try {
+                    await deleteVehicleImage(cloudinaryPublicId);
+                } catch (deleteError) {
+                    console.error('Failed to cleanup uploaded image:', deleteError);
+                }
+            }
+            return "Failed to retrieve created vehicle";
+        }
+        
+        return createdVehicle;
     } catch (error: any) {
         console.error('Error in createVehicleService:', error);
+        
+        // Clean up uploaded image if creation fails
+        if (cloudinaryPublicId) {
+            try {
+                await deleteVehicleImage(cloudinaryPublicId);
+            } catch (deleteError) {
+                console.error('Failed to cleanup uploaded image:', deleteError);
+            }
+        }
+        
         return "Failed to create vehicle";
     }
 }
@@ -529,4 +607,178 @@ export const updateVehicleAvailabilityService = async (
 
     // Return the full vehicle with specification
     return await getVehicleByIdService(vehicle_id);
+}
+
+export const addVehicleImagesService = async (
+    vehicle_spec_id: number,
+    images: Array<{ buffer: Buffer; fileName: string; mimeType: string }>,
+    is_primary_index: number = 0
+): Promise<{ success: boolean; message: string; images?: any[] }> => {
+    const db = getDbPool();
+    
+    // Store uploaded public_ids for cleanup if needed
+    const uploadedPublicIds: string[] = [];
+    
+    try {
+        // Upload all images to Cloudinary
+        const uploadPromises = images.map(async (image, index) => {
+            const uploadResult = await uploadVehicleImage(
+                image.buffer,
+                image.fileName,
+                vehicle_spec_id,
+                {
+                    transformation: [
+                        { width: 1000, height: 750, crop: 'fill', gravity: 'auto' },
+                        { quality: 'auto' }
+                    ]
+                }
+            );
+            
+            // Track uploaded images
+            uploadedPublicIds.push(uploadResult.public_id);
+            
+            return {
+                ...uploadResult,
+                is_primary: index === is_primary_index ? 1 : 0
+            };
+        });
+        
+        const uploadResults = await Promise.all(uploadPromises);
+        
+        // Save to database
+        const insertPromises = uploadResults.map(async (image) => {
+            const query = `
+                INSERT INTO VehicleImages 
+                (vehicle_spec_id, image_url, image_public_id, is_primary)
+                VALUES (@vehicle_spec_id, @image_url, @image_public_id, @is_primary)
+            `;
+            
+            await db.request()
+                .input('vehicle_spec_id', vehicle_spec_id)
+                .input('image_url', image.secure_url)
+                .input('image_public_id', image.public_id)
+                .input('is_primary', image.is_primary)
+                .query(query);
+        });
+        
+        await Promise.all(insertPromises);
+        
+        // If we added a primary image, update the main image_url in VehicleSpecifications
+        const primaryImage = uploadResults.find(img => img.is_primary === 1);
+        if (primaryImage) {
+            await db.request()
+                .input('vehicle_spec_id', vehicle_spec_id)
+                .input('image_url', primaryImage.secure_url)
+                .input('image_public_id', primaryImage.public_id)
+                .query(`
+                    UPDATE VehicleSpecifications 
+                    SET image_url = @image_url, image_public_id = @image_public_id
+                    WHERE vehicle_spec_id = @vehicle_spec_id
+                `);
+        }
+        
+        return {
+            success: true,
+            message: 'Vehicle images uploaded successfully',
+            images: uploadResults
+        };
+    } catch (error: any) {
+        console.error('Error adding vehicle images:', error);
+        
+        // Clean up uploaded images on failure
+        if (uploadedPublicIds.length > 0) {
+            try {
+                // Use the plural function for multiple images
+                await deleteVehicleImages(uploadedPublicIds);
+            } catch (cleanupError) {
+                console.error('Failed to cleanup images:', cleanupError);
+            }
+        }
+        
+        return {
+            success: false,
+            message: 'Failed to upload vehicle images'
+        };
+    }
+}
+
+export const updateVehicleImageService = async (
+    vehicle_spec_id: number,
+    image_file: { buffer: Buffer; fileName: string; mimeType: string }
+): Promise<{ success: boolean; message: string; image_url?: string }> => {
+    const db = getDbPool();
+    
+    // Store new upload result for cleanup if needed
+    let newPublicId: string | null = null;
+    let oldPublicId: string | null = null;
+    
+    try {
+        // Get current image public_id to delete it
+        const currentQuery = `
+            SELECT image_public_id FROM VehicleSpecifications 
+            WHERE vehicle_spec_id = @vehicle_spec_id
+        `;
+        
+        const currentResult = await db.request()
+            .input('vehicle_spec_id', vehicle_spec_id)
+            .query(currentQuery);
+            
+        oldPublicId = currentResult.recordset[0]?.image_public_id;
+        
+        // Upload new image
+        const uploadResult = await uploadVehicleImage(
+            image_file.buffer,
+            image_file.fileName,
+            vehicle_spec_id
+        );
+        
+        newPublicId = uploadResult.public_id;
+        
+        // Update database
+        const updateQuery = `
+            UPDATE VehicleSpecifications 
+            SET image_url = @image_url, 
+                image_public_id = @image_public_id,
+                updated_at = GETDATE()
+            WHERE vehicle_spec_id = @vehicle_spec_id
+        `;
+        
+        await db.request()
+            .input('vehicle_spec_id', vehicle_spec_id)
+            .input('image_url', uploadResult.secure_url)
+            .input('image_public_id', uploadResult.public_id)
+            .query(updateQuery);
+            
+        // Delete old image from Cloudinary after successful update
+        if (oldPublicId) {
+            try {
+                await deleteVehicleImage(oldPublicId);
+            } catch (deleteError) {
+                console.warn('Could not delete old image:', deleteError);
+                // This is not critical - we can continue
+            }
+        }
+            
+        return {
+            success: true,
+            message: 'Vehicle image updated successfully',
+            image_url: uploadResult.secure_url
+        };
+    } catch (error: any) {
+        console.error('Error updating vehicle image:', error);
+        
+        // Clean up new uploaded image if update failed
+        if (newPublicId) {
+            try {
+                await deleteVehicleImage(newPublicId);
+            } catch (cleanupError) {
+                console.error('Failed to cleanup uploaded image:', cleanupError);
+            }
+        }
+        
+        return {
+            success: false,
+            message: 'Failed to update vehicle image'
+        };
+    }
 }

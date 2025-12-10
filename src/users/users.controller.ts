@@ -2,6 +2,8 @@ import { type Context } from "hono"
 import * as userServices from "./users.service.ts";
 import bcrypt from "bcryptjs";
 import { getDbPool } from "../db/db.config.ts";
+import { uploadProfilePicture, deleteProfilePicture } from '../cloudinary/cloudinary.service.ts';
+
 //get all users
 export const getAllUsers = async (c: Context) => {
     try {
@@ -312,4 +314,152 @@ export const updateUserRole = async (c: Context) => {
         console.error('Error updating user role:', error);
         return c.json({ error: 'Failed to update user role' }, 500);
     }
+}
+
+
+
+
+// Add this function to handle profile picture upload
+export const uploadProfilePictureController = async (c: Context) => {
+  try {
+    console.log('📸 Profile picture upload requested');
+    
+    // Get authenticated user from middleware
+    const customer = c.customer;
+    if (!customer) {
+      console.log('❌ No customer in context');
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const user_id = customer.user_id;
+    
+    // Get the uploaded file
+    const formData = await c.req.formData();
+    const file = formData.get('profile_picture') as File;
+    
+    if (!file) {
+      return c.json({ error: 'No file uploaded' }, 400);
+    }
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    if (!allowedTypes.includes(file.type)) {
+      return c.json({ error: 'Invalid file type. Only JPG, PNG, WEBP, and GIF are allowed.' }, 400);
+    }
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size > maxSize) {
+      return c.json({ error: 'File size too large. Maximum size is 5MB.' }, 400);
+    }
+
+    // Convert file to buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Get current user to check for existing profile picture
+    const currentUser = await userServices.getUserByIdService(user_id);
+    if (!currentUser) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Delete old profile picture from Cloudinary if exists
+    if (currentUser.profile_picture_public_id) {
+      try {
+        await deleteProfilePicture(currentUser.profile_picture_public_id);
+        console.log('🗑️ Deleted old profile picture:', currentUser.profile_picture_public_id);
+      } catch (error) {
+        console.warn('⚠️ Could not delete old profile picture, continuing with upload:', error);
+      }
+    }
+
+    // Upload new picture to Cloudinary
+    const uploadResult = await uploadProfilePicture(buffer, user_id, file.name);
+    
+    console.log('✅ Cloudinary upload successful:', uploadResult.public_id);
+
+    // Update user record in database
+    const updatedUser = await userServices.updateUserProfilePictureService(
+      user_id,
+      uploadResult.secure_url,
+      uploadResult.public_id
+    );
+
+    if (!updatedUser) {
+      return c.json({ error: 'Failed to update user profile' }, 500);
+    }
+
+    // Remove password from response
+    const { password, ...userWithoutPassword } = updatedUser;
+
+    return c.json({
+      success: true,
+      message: 'Profile picture uploaded successfully',
+      profile_picture: uploadResult.secure_url,
+      user: userWithoutPassword
+    }, 200);
+
+  } catch (error: any) {
+    console.error('❌ Error uploading profile picture:', error);
+    return c.json({ 
+      error: 'Failed to upload profile picture',
+      details: error.message 
+    }, 500);
+  }
+}
+
+// Add this function to handle profile picture removal
+export const removeProfilePictureController = async (c: Context) => {
+  try {
+    console.log('🗑️ Profile picture removal requested');
+    
+    // Get authenticated user from middleware
+    const customer = c.customer;
+    if (!customer) {
+      console.log('❌ No customer in context');
+      return c.json({ error: 'Authentication required' }, 401);
+    }
+
+    const user_id = customer.user_id;
+    
+    // Get current user
+    const currentUser = await userServices.getUserByIdService(user_id);
+    if (!currentUser) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Delete from Cloudinary if exists
+    if (currentUser.profile_picture_public_id) {
+      try {
+        await deleteProfilePicture(currentUser.profile_picture_public_id);
+        console.log('🗑️ Deleted profile picture from Cloudinary:', currentUser.profile_picture_public_id);
+      } catch (error) {
+        console.warn('⚠️ Could not delete profile picture from Cloudinary:', error);
+        // Continue to remove from database even if Cloudinary fails
+      }
+    }
+
+    // Remove from database
+    const updatedUser = await userServices.removeUserProfilePictureService(user_id);
+    
+    if (!updatedUser) {
+      return c.json({ error: 'Failed to remove profile picture' }, 500);
+    }
+
+    // Remove password from response
+    const { password, ...userWithoutPassword } = updatedUser;
+
+    return c.json({
+      success: true,
+      message: 'Profile picture removed successfully',
+      user: userWithoutPassword
+    }, 200);
+
+  } catch (error: any) {
+    console.error('❌ Error removing profile picture:', error);
+    return c.json({ 
+      error: 'Failed to remove profile picture',
+      details: error.message 
+    }, 500);
+  }
 }

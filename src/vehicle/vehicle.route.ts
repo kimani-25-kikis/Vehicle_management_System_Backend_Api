@@ -16,4 +16,7 @@ vehicleRoutes.put('/vehicles/:vehicle_id', adminRoleAuth, vehicleControllers.upd
 vehicleRoutes.delete('/vehicles/:vehicle_id', adminRoleAuth, vehicleControllers.deleteVehicle)
 vehicleRoutes.patch('/vehicles/:vehicle_id/availability', adminRoleAuth, vehicleControllers.updateVehicleAvailability)
 
+vehicleRoutes.post('/vehicles/:vehicle_spec_id/image', adminRoleAuth, vehicleControllers.uploadVehicleImage)
+vehicleRoutes.post('/vehicles/:vehicle_spec_id/images', adminRoleAuth, vehicleControllers.uploadVehicleImages)
+
 export default vehicleRoutes

@@ -16,4 +16,7 @@ userRoutes.put('/users/:user_id', userControllers.updateUser)
 userRoutes.delete('/users/:user_id', userControllers.deleteUser)
 userRoutes.patch('/user-status/:user_id', userControllers.updateUserRole)
 
+userRoutes.post('/users/profile-picture', customerRoleAuth, userControllers.uploadProfilePictureController)
+userRoutes.delete('/users/profile-picture', customerRoleAuth, userControllers.removeProfilePictureController)
+
 export default userRoutes

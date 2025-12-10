@@ -11,6 +11,7 @@
     "@hono/prometheus": "^1.0.2",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.8.0",
     "dotenv": "^17.2.3",
     "hono": "^4.10.6",
     "hono-rate-limiter": "^0.4.2",

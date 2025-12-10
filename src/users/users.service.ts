@@ -5,10 +5,14 @@ interface UserResponse {
     first_name: string;
     last_name: string;
     email: string;
-    address:string;
+    address: string;
     phone_number: string;
     password: string;
     user_type?: string;
+    profile_picture?: string;
+    profile_picture_public_id?: string;
+    created_at?: string;
+    updated_at?: string;
     
 }
 
@@ -50,7 +54,10 @@ export const updateUserService = async (
     phone_number?: string, 
     password?: string,
     address?: string,
-    user_type?: string  // ADD THIS PARAMETER
+    user_type?: string,
+    profile_picture?: string,  
+    profile_picture_public_id?: string
+
 ): Promise<UserResponse | null> => {
     const db = getDbPool();
     
@@ -82,9 +89,17 @@ export const updateUserService = async (
         updates.push('address = @address');
         inputs.address = address;
     }
-    if (user_type !== undefined) {  // ADD THIS CHECK
+    if (user_type !== undefined) {  
         updates.push('user_type = @user_type');
         inputs.user_type = user_type;
+    }
+    if (profile_picture !== undefined) { 
+        updates.push('profile_picture = @profile_picture');
+        inputs.profile_picture = profile_picture;
+    }
+    if (profile_picture_public_id !== undefined) {  
+        updates.push('profile_picture_public_id = @profile_picture_public_id');
+        inputs.profile_picture_public_id = profile_picture_public_id;
     }
     
     if (updates.length === 0) {
@@ -175,3 +190,61 @@ export const updateUserRoleService = async (
         throw error;
     }
 }
+
+export const updateUserProfilePictureService = async (
+    user_id: number, 
+    profile_picture: string,
+    profile_picture_public_id: string
+): Promise<UserResponse | null> => {
+    const db = getDbPool();
+    
+    const query = `
+        UPDATE Users 
+        SET profile_picture = @profile_picture, 
+            profile_picture_public_id = @profile_picture_public_id,
+            updated_at = GETDATE() 
+        OUTPUT INSERTED.* 
+        WHERE user_id = @user_id
+    `;
+    
+    try {
+        const result = await db.request()
+            .input('user_id', user_id)
+            .input('profile_picture', profile_picture)
+            .input('profile_picture_public_id', profile_picture_public_id)
+            .query(query);
+            
+        return result.recordset[0] || null;
+    } catch (error) {
+        console.error('Error in updateUserProfilePictureService:', error);
+        throw error;
+    }
+}
+
+// Add this function to remove profile picture
+export const removeUserProfilePictureService = async (
+    user_id: number
+): Promise<UserResponse | null> => {
+    const db = getDbPool();
+    
+    const query = `
+        UPDATE Users 
+        SET profile_picture = NULL, 
+            profile_picture_public_id = NULL,
+            updated_at = GETDATE() 
+        OUTPUT INSERTED.* 
+        WHERE user_id = @user_id
+    `;
+    
+    try {
+        const result = await db.request()
+            .input('user_id', user_id)
+            .query(query);
+            
+        return result.recordset[0] || null;
+    } catch (error) {
+        console.error('Error in removeUserProfilePictureService:', error);
+        throw error;
+    }
+}
+
