@@ -54,7 +54,7 @@ export const createUser = async (c: Context) => {
             body.email,
             body.phone_number || null,
             hashedPassword,
-            body.user_type || 'user', // Default to 'user' if not specified
+            body.user_type || 'customer', 
             body.address || null
         );
 
@@ -322,29 +322,35 @@ export const updateUserRole = async (c: Context) => {
 // Add this function to handle profile picture upload
 export const uploadProfilePictureController = async (c: Context) => {
   try {
-    console.log('📸 Profile picture upload requested');
+    console.log('📸 Profile picture upload requested - OPEN ROUTE');
     
-    // Get authenticated user from middleware
-    const customer = c.customer;
-    if (!customer) {
-      console.log('❌ No customer in context');
-      return c.json({ error: 'Authentication required' }, 401);
-    }
-
-    const user_id = customer.user_id;
-    
-    // Get the uploaded file
+    // Get user_id from form data instead of middleware
     const formData = await c.req.formData();
     const file = formData.get('profile_picture') as File;
+    const user_id_str = formData.get('user_id') as string;
+    
+    console.log('📋 Form data received:', { 
+      hasFile: !!file,
+      fileName: file?.name,
+      user_id: user_id_str 
+    });
     
     if (!file) {
       return c.json({ error: 'No file uploaded' }, 400);
     }
 
+    // Validate user_id
+    const user_id = parseInt(user_id_str);
+    if (isNaN(user_id) || user_id <= 0) {
+      return c.json({ error: 'Valid user_id is required' }, 400);
+    }
+
     // Validate file type
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
     if (!allowedTypes.includes(file.type)) {
-      return c.json({ error: 'Invalid file type. Only JPG, PNG, WEBP, and GIF are allowed.' }, 400);
+      return c.json({ 
+        error: 'Invalid file type. Only JPG, PNG, WEBP, and GIF are allowed.' 
+      }, 400);
     }
 
     // Validate file size (max 5MB)
@@ -411,19 +417,26 @@ export const uploadProfilePictureController = async (c: Context) => {
 // Add this function to handle profile picture removal
 export const removeProfilePictureController = async (c: Context) => {
   try {
-    console.log('🗑️ Profile picture removal requested');
+    console.log('🗑️ Profile picture removal requested - OPEN ROUTE');
     
-    // Get authenticated user from middleware
-    const customer = c.customer;
-    if (!customer) {
-      console.log('❌ No customer in context');
-      return c.json({ error: 'Authentication required' }, 401);
+    // Get user_id from request body
+    const body = await c.req.json();
+    const { user_id } = body;
+    
+    console.log('📋 Request body:', { user_id });
+    
+    if (!user_id) {
+      return c.json({ error: 'user_id is required' }, 400);
     }
 
-    const user_id = customer.user_id;
+    // Validate user_id
+    const userId = parseInt(user_id);
+    if (isNaN(userId) || userId <= 0) {
+      return c.json({ error: 'Valid user_id is required' }, 400);
+    }
     
     // Get current user
-    const currentUser = await userServices.getUserByIdService(user_id);
+    const currentUser = await userServices.getUserByIdService(userId);
     if (!currentUser) {
       return c.json({ error: 'User not found' }, 404);
     }
@@ -435,12 +448,11 @@ export const removeProfilePictureController = async (c: Context) => {
         console.log('🗑️ Deleted profile picture from Cloudinary:', currentUser.profile_picture_public_id);
       } catch (error) {
         console.warn('⚠️ Could not delete profile picture from Cloudinary:', error);
-        // Continue to remove from database even if Cloudinary fails
       }
     }
 
     // Remove from database
-    const updatedUser = await userServices.removeUserProfilePictureService(user_id);
+    const updatedUser = await userServices.removeUserProfilePictureService(userId);
     
     if (!updatedUser) {
       return c.json({ error: 'Failed to remove profile picture' }, 500);

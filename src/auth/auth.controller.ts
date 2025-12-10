@@ -4,7 +4,7 @@ import { getUserByEmailService } from "../users/users.service.ts";
 import * as authServices from "./auth.service.ts";
 import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
-import { EmailService } from "../email/email.service.ts"; // ADD THIS IMPORT
+import { EmailService } from "../email/email.service.ts"; 
 
 dotenv.config();
 
@@ -13,6 +13,7 @@ interface CreateUserRequest {
     last_name: string;
     email: string;
     phone_number: string;
+    user_type: string;
     password: string;
 }
 

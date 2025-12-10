@@ -1,10 +1,10 @@
 import {Hono} from 'hono'
 import * as userControllers from './users.controller.ts'
-import { adminRoleAuth, customerRoleAuth } from '../middleware/bearAuth.ts'
+//import { adminRoleAuth, customerRoleAuth } from '../middleware/bearAuth.ts'
 
 const userRoutes = new Hono()
 
-userRoutes.put('/users/change-password',customerRoleAuth, userControllers.changePassword) 
+userRoutes.put('/users/change-password', userControllers.changePassword) 
 
 
 userRoutes.post('/users', userControllers.createUser) 
@@ -16,7 +16,7 @@ userRoutes.put('/users/:user_id', userControllers.updateUser)
 userRoutes.delete('/users/:user_id', userControllers.deleteUser)
 userRoutes.patch('/user-status/:user_id', userControllers.updateUserRole)
 
-userRoutes.post('/users/profile-picture', customerRoleAuth, userControllers.uploadProfilePictureController)
-userRoutes.delete('/users/profile-picture', customerRoleAuth, userControllers.removeProfilePictureController)
+userRoutes.post('/users/profile-picture',  userControllers.uploadProfilePictureController)
+userRoutes.delete('/users/profile-picture',  userControllers.removeProfilePictureController)
 
 export default userRoutes

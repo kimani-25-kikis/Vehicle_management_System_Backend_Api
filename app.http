@@ -17,9 +17,10 @@ Content-Type: application/json
 {
   "first_name": "Lucy",
   "last_name": "Njambi",
-  "email": "lnyambura812@gmail.com",
+  "email": "lnyambura@gmail.com",
   "phone_number": "0711477634",
-  "password":"123456789"
+  "password":"123456789",
+  "user_type":"customer"
   
 }
 
